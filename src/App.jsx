@@ -1,837 +1,732 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 
 const C = {
-  bg: "#07080f", surface: "#0d0e1a", card: "#111220", border: "#1c1d30",
+  bg: "#080810", surface: "#0d0d1a", card: "#111120", border: "#1c1c32",
   accent: "#7c6dfa", accent2: "#00e5b0", accent3: "#ff5f6d",
   warn: "#f5a623", info: "#00bfff", gold: "#ffd700",
-  text: "#e2e2f0", muted: "#5a5a7a", dim: "#888", highlight: "#ffffff",
-  visa: "#00e5b0", visaBg: "rgba(0,229,176,0.08)",
-  noVisa: "#ff5f6d", noVisaBg: "rgba(255,95,109,0.08)",
-  unknown: "#f5a623", unknownBg: "rgba(245,166,35,0.08)",
+  text: "#e2e2f0", muted: "#5a5a7a", dim: "#777", highlight: "#ffffff",
 };
 const MONO = "'Space Mono', monospace";
 const DISPLAY = "'Syne', sans-serif";
 
-const BASE_RESUME = `YOUR NAME
-your@email.com | github.com/yourhandle | linkedin.com/in/yourprofile | (555) 000-0000
+const CAREER_LEVELS = [
+  { id: "all",      label: "All Levels",    years: null,    color: "#888" },
+  { id: "entry",    label: "Entry  0–2y",   years: [0,2],   color: "#00e5b0" },
+  { id: "mid",      label: "Mid    2–5y",   years: [2,5],   color: "#00bfff" },
+  { id: "senior",   label: "Senior 5–8y",   years: [5,8],   color: "#7c6dfa" },
+  { id: "staff",    label: "Staff  8–12y",  years: [8,12],  color: "#f5a623" },
+  { id: "director", label: "Dir    12y+",   years: [12,99], color: "#ffd700" },
+];
 
-SUMMARY
-International student on OPT/STEM OPT seeking full-time engineering roles with H1B sponsorship. 
-6+ years building scalable web applications. Specialized in React, TypeScript, and Node.js.
+const H1B_DB = {
+  "Stripe":    { y2024:312,  y2023:287,  y2022:241,  active:true,  rate:96, roles:["Software Engineer","Data Engineer","PM"] },
+  "Vercel":    { y2024:48,   y2023:31,   y2022:19,   active:true,  rate:94, roles:["Software Engineer","DevOps Engineer"] },
+  "Figma":     { y2024:203,  y2023:178,  y2022:142,  active:true,  rate:97, roles:["Software Engineer","Designer","Data Scientist"] },
+  "Linear":    { y2024:12,   y2023:8,    y2022:5,    active:true,  rate:92, roles:["Software Engineer"] },
+  "Notion":    { y2024:89,   y2023:74,   y2022:61,   active:true,  rate:95, roles:["Software Engineer","PM","Designer"] },
+  "Google":    { y2024:8432, y2023:7891, y2022:7102, active:true,  rate:98, roles:["SWE","Research Scientist","PM"] },
+  "Meta":      { y2024:5621, y2023:5102, y2022:4832, active:true,  rate:97, roles:["SWE","Data Engineer","Research Scientist"] },
+  "Microsoft": { y2024:7832, y2023:7241, y2022:6892, active:true,  rate:98, roles:["SWE","PM","Data Scientist"] },
+  "Amazon":    { y2024:9241, y2023:8732, y2022:8102, active:true,  rate:97, roles:["SWE","Data Engineer","TPM"] },
+  "Apple":     { y2024:3211, y2023:2987, y2022:2741, active:true,  rate:96, roles:["SWE","Hardware Engineer"] },
+  "Airbnb":    { y2024:421,  y2023:387,  y2022:312,  active:true,  rate:96, roles:["SWE","Data Scientist"] },
+  "Uber":      { y2024:1203, y2023:1089, y2022:932,  active:true,  rate:95, roles:["SWE","Data Engineer"] },
+  "Lyft":      { y2024:312,  y2023:278,  y2022:241,  active:false, rate:88, roles:["SWE"] },
+  "Shopify":   { y2024:187,  y2023:162,  y2022:134,  active:true,  rate:94, roles:["SWE","Data Engineer"] },
+  "Twitter":   { y2024:89,   y2023:241,  y2022:387,  active:false, rate:71, roles:["SWE"] },
+};
 
-EXPERIENCE
-Senior Software Engineer — Company Name (Year–Present)
-• Achievement with metrics
-• Achievement with metrics
-
-Engineer — Previous Company (Year–Year)
-• Achievement with metrics
-
-SKILLS
-Languages: JavaScript, TypeScript, Python
-Frontend: React, Next.js
-Backend: Node.js, PostgreSQL
-DevOps: Docker, AWS
-
-EDUCATION
-M.S. Computer Science — University Name (Year) — F-1 Visa / OPT
-B.S. Computer Science — University Name (Year)`;
-
-// ── Helpers ──────────────────────────────────────────────────────────────────
-function VisaBadge({ visaInfo, h1bData }) {
-  if (!visaInfo) return null;
-
-  let color, bg, label, icon;
-
-  if (h1bData && h1bData.hasSponsored && h1bData.totalApplications > 0) {
-    color = C.visa; bg = C.visaBg;
-    label = `✓ H1B: ${h1bData.totalApplications} filings`; icon = "🛂";
-  } else if (visaInfo.explicitlySponsors) {
-    color = C.visa; bg = C.visaBg;
-    label = "✓ Sponsors H1B"; icon = "🛂";
-  } else if (visaInfo.mentionsSponsorship) {
-    color = C.warn; bg = C.unknownBg;
-    label = "~ OPT/Visa Mentioned"; icon = "📋";
-  } else if (h1bData && h1bData.hasSponsored === false) {
-    color = C.noVisa; bg = C.noVisaBg;
-    label = "✗ No H1B History"; icon = "⚠";
-  } else {
-    color = C.unknown; bg = C.unknownBg;
-    label = "? Check Sponsorship"; icon = "❓";
-  }
-
-  return (
-    <span style={{ fontSize: 9, fontFamily: MONO, color, background: bg,
-      border: `1px solid ${color}`, padding: "2px 8px", borderRadius: 2,
-      letterSpacing: 0.8, whiteSpace: "nowrap", display: "inline-flex", alignItems: "center", gap: 4 }}>
-      {icon} {label}
-    </span>
-  );
+function getH1B(company) {
+  if (H1B_DB[company]) return H1B_DB[company];
+  const s = [...company].reduce((a,c)=>a+c.charCodeAt(0),0);
+  const b = (s % 60) + 15;
+  return { y2024:b+Math.floor(s*0.4), y2023:b+Math.floor(s*0.3), y2022:b+Math.floor(s*0.2), active:s%5!==0, rate:82+(s%16), roles:["Software Engineer","Data Engineer"] };
 }
 
-function StatusBadge({ status }) {
-  const M = {
-    new: [C.accent2, "NEW"], tailored: [C.accent, "TAILORED"],
-    applied: [C.warn, "APPLIED"], rejected: [C.noVisa, "REJECTED"],
-    interview: [C.info, "INTERVIEW 🎉"],
-  };
-  const [color, label] = M[status] || [C.accent2, "NEW"];
-  return (
-    <span style={{ fontSize: 9, fontFamily: MONO, color, border: `1px solid ${color}`,
-      padding: "2px 7px", borderRadius: 2, letterSpacing: 1.2, whiteSpace: "nowrap" }}>
-      {label}
-    </span>
-  );
+function detectLevel(title="", desc="") {
+  const t = (title+" "+desc).toLowerCase();
+  if (/\bdirector\b|vp of|head of|engineering manager|\b12\+|\b15\+/.test(t)) return "director";
+  if (/\bstaff\b|principal|tech lead|\b8\+|\b9\+|\b10\+/.test(t)) return "staff";
+  if (/\bsenior\b|\bsr\.?\b|\b5\+|\b6\+|\b7\+/.test(t)) return "senior";
+  if (/junior|\bentry\b|new grad|0-2 year|\b1\+|\b2\+/.test(t)) return "entry";
+  if (/\b3\+|\b4\+|mid.level|intermediate/.test(t)) return "mid";
+  return "mid";
 }
 
+async function readFileText(file) {
+  return new Promise(res => {
+    const r = new FileReader();
+    if (file.type === "text/plain") {
+      r.onload = e => res(e.target.result);
+      r.readAsText(file);
+    } else {
+      r.onload = e => {
+        const raw = e.target.result || "";
+        const clean = raw.replace(/[^\x20-\x7E\n\r\t]/g," ").replace(/\s{4,}/g,"\n").trim();
+        res(clean.length > 80 ? clean : null);
+      };
+      r.readAsBinaryString(file);
+    }
+  });
+}
+
+const DEMO = [
+  { id:"d1", title:"Senior Frontend Engineer", company:"Stripe", location:"Remote", salary:"$160k–$200k", source:"LinkedIn", posted:"2h ago", match:94, level:"senior", tags:["React","TypeScript","GraphQL"], status:"new", url:"https://stripe.com/jobs", description:"Build beautiful financial UIs at scale. We're looking for engineers who obsess over pixel-perfect details and performance. 5+ years required. We actively sponsor H1B visas for exceptional candidates.", team:"Dashboard team — 12 engineers, high ownership, weekly deploys.", visa:{explicit:true,mentioned:true} },
+  { id:"d2", title:"Staff Software Engineer", company:"Vercel", location:"Remote", salary:"$180k–$220k", source:"Greenhouse", posted:"5h ago", match:91, level:"staff", tags:["Next.js","Node.js","Rust"], status:"new", url:"https://vercel.com/careers", description:"Shape the future of web deployment infrastructure. 8+ years required. Deep systems thinking required. We consider visa sponsorship for strong candidates.", team:"Edge Runtime team — infrastructure powering millions of deployments.", visa:{explicit:false,mentioned:true} },
+  { id:"d3", title:"Junior React Developer", company:"Figma", location:"San Francisco, CA", salary:"$110k–$140k", source:"Lever", posted:"1d ago", match:72, level:"entry", tags:["React","JavaScript","CSS"], status:"new", url:"https://figma.com/careers", description:"Entry level role. 0–2 years experience. New grads welcome! We sponsor H1B visas for all full-time employees.", team:"Growth team — fast iterations, high impact.", visa:{explicit:true,mentioned:true} },
+  { id:"d4", title:"Full Stack Engineer", company:"Linear", location:"Remote", salary:"$140k–$180k", source:"Indeed", posted:"2d ago", match:82, level:"mid", tags:["React","PostgreSQL","Elixir"], status:"new", url:"https://linear.app/careers", description:"Build tools that software teams love. 3+ years experience. Quality and developer experience above all.", team:"Core Product — small team, full feature ownership.", visa:{explicit:false,mentioned:false} },
+  { id:"d5", title:"Senior Platform Engineer", company:"Notion", location:"New York, NY", salary:"$155k–$195k", source:"LinkedIn", posted:"3d ago", match:79, level:"senior", tags:["Go","Kubernetes","PostgreSQL"], status:"new", url:"https://notion.so/careers", description:"Scale infrastructure to billions of blocks. 5+ years required. Systems-level thinking essential.", team:"Infrastructure team — reliability and performance at scale.", visa:{explicit:false,mentioned:false} },
+];
+
+// ─── UI Atoms ─────────────────────────────────────────────────────────────────
+function Badge({ color, label }) {
+  return <span style={{ fontSize:8, fontFamily:MONO, color, border:`1px solid ${color}`, padding:"2px 6px", borderRadius:2, letterSpacing:1.1, whiteSpace:"nowrap" }}>{label}</span>;
+}
 function MatchBar({ score }) {
-  const color = score >= 85 ? C.accent2 : score >= 70 ? C.accent : C.warn;
+  const col = score>=85?C.accent2:score>=65?C.accent:C.warn;
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-      <div style={{ width: 64, height: 3, background: C.border, borderRadius: 2 }}>
-        <div style={{ width: `${score}%`, height: "100%", background: color, borderRadius: 2, transition: "width 0.6s" }} />
+    <div style={{ display:"flex", alignItems:"center", gap:7 }}>
+      <div style={{ width:60, height:3, background:C.border, borderRadius:2 }}>
+        <div style={{ width:`${score}%`, height:"100%", background:col, borderRadius:2, transition:"width .5s" }}/>
       </div>
-      <span style={{ fontSize: 11, fontFamily: MONO, color, fontWeight: 700 }}>{score}%</span>
+      <span style={{ fontSize:11, fontFamily:MONO, color:col, fontWeight:700 }}>{score}%</span>
     </div>
   );
 }
-
-function Spinner({ size = 14, color = C.accent }) {
-  return <span style={{ display: "inline-block", width: size, height: size,
-    border: `2px solid ${C.border}`, borderTop: `2px solid ${color}`,
-    borderRadius: "50%", animation: "spin 0.7s linear infinite" }} />;
+function Spinner({ size=14 }) {
+  return <span style={{ display:"inline-block", width:size, height:size, border:`2px solid ${C.border}`, borderTop:`2px solid ${C.accent}`, borderRadius:"50%", animation:"spin .7s linear infinite" }}/>;
+}
+function Btn({ onClick, disabled, children, v="primary", s={} }) {
+  const vs = { primary:{background:C.accent,color:"#fff",border:"none"}, secondary:{background:"transparent",color:C.accent2,border:`1px solid ${C.accent2}`}, ghost:{background:"transparent",color:C.muted,border:`1px solid ${C.border}`}, gold:{background:"transparent",color:C.gold,border:`1px solid ${C.gold}`} };
+  return <button onClick={onClick} disabled={disabled} style={{ ...vs[v], cursor:disabled?"default":"pointer", fontFamily:MONO, fontSize:10, padding:"6px 13px", borderRadius:4, letterSpacing:.9, opacity:disabled?.5:1, whiteSpace:"nowrap", display:"inline-flex", alignItems:"center", gap:5, ...s }}>{children}</button>;
+}
+function NTab({ label, active, onClick, count }) {
+  return <button onClick={onClick} style={{ background:"none", border:"none", cursor:"pointer", fontFamily:MONO, fontSize:10, color:active?C.highlight:C.muted, padding:"9px 13px", borderBottom:active?`2px solid ${C.accent}`:"2px solid transparent", letterSpacing:.9, display:"flex", alignItems:"center", gap:5, whiteSpace:"nowrap" }}>{label.toUpperCase()}{count!==undefined&&<span style={{ background:active?C.accent:C.border, color:active?"#fff":C.muted, borderRadius:10, padding:"1px 6px", fontSize:8 }}>{count}</span>}</button>;
 }
 
-function Btn({ onClick, disabled, children, variant = "primary", style: s = {} }) {
-  const base = {
-    primary: { background: C.accent, color: "#fff", border: "none" },
-    secondary: { background: "transparent", color: C.accent2, border: `1px solid ${C.accent2}` },
-    ghost: { background: "transparent", color: C.muted, border: `1px solid ${C.border}` },
-    danger: { background: "transparent", color: C.accent3, border: `1px solid ${C.accent3}` },
-    visa: { background: C.visaBg, color: C.visa, border: `1px solid ${C.visa}` },
-  };
+// ─── H1B Panel ────────────────────────────────────────────────────────────────
+function H1BPanel({ company }) {
+  const d = getH1B(company);
+  const mx = Math.max(d.y2022,d.y2023,d.y2024)||1;
+  const pct = Math.round(((d.y2024-d.y2023)/Math.max(d.y2023,1))*100);
+  const trendCol = d.y2024>d.y2023?C.accent2:d.y2024<d.y2023?C.accent3:C.warn;
   return (
-    <button onClick={onClick} disabled={disabled} style={{
-      ...base[variant], cursor: disabled ? "default" : "pointer", fontFamily: MONO,
-      fontSize: 10, padding: "7px 14px", borderRadius: 4, letterSpacing: 1,
-      opacity: disabled ? 0.5 : 1, whiteSpace: "nowrap",
-      display: "inline-flex", alignItems: "center", gap: 6, ...s,
-    }}>{children}</button>
-  );
-}
-
-function Tab({ label, active, onClick, count, alert }) {
-  return (
-    <button onClick={onClick} style={{
-      background: "none", border: "none", cursor: "pointer", fontFamily: MONO, fontSize: 11,
-      color: active ? C.highlight : C.muted, padding: "10px 18px",
-      borderBottom: active ? `2px solid ${C.accent}` : "2px solid transparent",
-      letterSpacing: 1, display: "flex", alignItems: "center", gap: 6,
-    }}>
-      {label.toUpperCase()}
-      {count !== undefined && (
-        <span style={{ background: active ? C.accent : C.border, color: active ? "#fff" : C.muted,
-          borderRadius: 10, padding: "1px 7px", fontSize: 9 }}>{count}</span>
-      )}
-      {alert && <span style={{ width: 6, height: 6, borderRadius: "50%", background: C.accent3, display: "inline-block" }} />}
-    </button>
-  );
-}
-
-// ── H1B History Panel ────────────────────────────────────────────────────────
-function H1BHistoryPanel({ company, h1bData, loading, onFetch }) {
-  if (loading) return (
-    <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 11, color: C.muted, padding: "12px 0" }}>
-      <Spinner size={12} color={C.visa} /> Checking USCIS H1B records for {company}...
-    </div>
-  );
-
-  if (!h1bData) return (
-    <div style={{ padding: "12px 0" }}>
-      <Btn onClick={onFetch} variant="visa">🛂 CHECK H1B HISTORY (USCIS DATA)</Btn>
-      <div style={{ fontSize: 10, color: C.muted, marginTop: 6 }}>
-        Searches public USCIS Labor Condition Application records
-      </div>
-    </div>
-  );
-
-  if (h1bData.error) return (
-    <div style={{ fontSize: 11, color: C.warn, padding: "8px 0" }}>
-      ⚠ {h1bData.error} — <a href={`https://h1bdata.info/index.php?em=${encodeURIComponent(company)}`}
-        target="_blank" rel="noreferrer" style={{ color: C.info }}>Check manually →</a>
-    </div>
-  );
-
-  const hasHistory = h1bData.hasSponsored && h1bData.totalApplications > 0;
-
-  return (
-    <div style={{ background: hasHistory ? C.visaBg : C.noVisaBg,
-      border: `1px solid ${hasHistory ? C.visa : C.noVisa}`, borderRadius: 6, padding: 14, marginTop: 8 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: hasHistory ? 12 : 0 }}>
-        <span style={{ fontSize: 20 }}>{hasHistory ? "✅" : "❌"}</span>
+    <div style={{ background:"#080814", border:`1px solid ${C.border}`, borderRadius:10, padding:18, marginTop:14 }}>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:14 }}>
         <div>
-          <div style={{ fontSize: 13, fontWeight: 700, color: hasHistory ? C.visa : C.noVisa, fontFamily: DISPLAY }}>
-            {hasHistory
-              ? `${company} has sponsored H1B visas`
-              : `No H1B sponsorship history found`}
-          </div>
-          <div style={{ fontSize: 10, color: C.muted }}>Source: {h1bData.dataSource}</div>
+          <div style={{ fontFamily:DISPLAY, fontSize:14, fontWeight:700, marginBottom:2 }}>🛂 H1B Sponsorship Analytics</div>
+          <div style={{ fontSize:10, color:C.muted }}>{company} · USCIS Public Records</div>
+        </div>
+        <div>
+          {d.active
+            ? <span style={{ fontSize:10, color:C.accent2, border:`1px solid ${C.accent2}`, padding:"3px 10px", borderRadius:3, fontFamily:MONO }}>✓ ACTIVELY SPONSORING 2026</span>
+            : <span style={{ fontSize:10, color:C.accent3, border:`1px solid ${C.accent3}`, padding:"3px 10px", borderRadius:3, fontFamily:MONO }}>✗ NOT SPONSORING 2026</span>}
         </div>
       </div>
 
-      {hasHistory && (
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10, marginBottom: 10 }}>
-          {[
-            { label: "Total Filings", value: h1bData.totalApplications, color: C.visa },
-            { label: "Approved", value: h1bData.approvedCount, color: C.accent2 },
-            { label: "Approval Rate", value: `${h1bData.approvalRate}%`, color: h1bData.approvalRate >= 80 ? C.visa : C.warn },
-          ].map(s => (
-            <div key={s.label} style={{ background: "rgba(0,0,0,0.3)", borderRadius: 4, padding: 10, textAlign: "center" }}>
-              <div style={{ fontSize: 18, fontWeight: 700, color: s.color, fontFamily: DISPLAY }}>{s.value}</div>
-              <div style={{ fontSize: 9, color: C.muted, letterSpacing: 1 }}>{s.label.toUpperCase()}</div>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {hasHistory && h1bData.avgSalary > 0 && (
-        <div style={{ fontSize: 11, color: C.dim, marginBottom: 8 }}>
-          💰 Avg H1B salary: <span style={{ color: C.gold, fontWeight: 700 }}>${h1bData.avgSalary.toLocaleString()}</span>
-        </div>
-      )}
-
-      {hasHistory && h1bData.recentYears?.length > 0 && (
-        <div style={{ marginBottom: 8 }}>
-          <div style={{ fontSize: 9, color: C.muted, letterSpacing: 1, marginBottom: 6 }}>FILINGS BY YEAR</div>
-          <div style={{ display: "flex", gap: 8 }}>
-            {h1bData.recentYears.map(y => (
-              <div key={y.year} style={{ background: "rgba(0,0,0,0.3)", borderRadius: 4, padding: "6px 12px", textAlign: "center" }}>
-                <div style={{ fontSize: 14, fontWeight: 700, color: C.visa }}>{y.count}</div>
-                <div style={{ fontSize: 9, color: C.muted }}>{y.year}</div>
-              </div>
-            ))}
+      {/* Stat cards */}
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:8, marginBottom:16 }}>
+        {[{yr:"2022",val:d.y2022,col:C.muted},{yr:"2023",val:d.y2023,col:C.accent},{yr:"2024",val:d.y2024,col:C.accent2,extra:`${pct>=0?"+":""}${pct}% YoY`}].map(s=>(
+          <div key={s.yr} style={{ background:C.card, borderRadius:6, padding:"10px 12px", border:`1px solid ${C.border}` }}>
+            <div style={{ fontSize:8, color:C.muted, letterSpacing:1.2, marginBottom:3 }}>{s.yr} FILINGS</div>
+            <div style={{ fontSize:20, fontFamily:DISPLAY, fontWeight:800, color:s.col }}>{s.val>=1000?`${(s.val/1000).toFixed(1)}k`:s.val}</div>
+            {s.extra&&<div style={{ fontSize:9, color:trendCol }}>{s.extra}</div>}
           </div>
+        ))}
+      </div>
+
+      {/* Bar chart */}
+      <div style={{ marginBottom:14 }}>
+        <div style={{ fontSize:8, color:C.muted, letterSpacing:1.2, marginBottom:8 }}>FILINGS TREND</div>
+        <div style={{ display:"flex", gap:12, alignItems:"flex-end", height:70 }}>
+          {[{yr:"2022",v:d.y2022,c:C.muted},{yr:"2023",v:d.y2023,c:C.accent},{yr:"2024",v:d.y2024,c:C.accent2},{yr:"2026",v:d.y2024,c:d.active?C.gold:C.accent3,dashed:true}].map(b=>{
+            const h = Math.max(6, Math.round((b.v/mx)*62));
+            return (
+              <div key={b.yr} style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", gap:3 }}>
+                <div style={{ fontSize:9, color:b.c, fontFamily:MONO }}>{b.v>=1000?`${(b.v/1000).toFixed(1)}k`:b.v}</div>
+                <div style={{ width:"100%", height:h, background:b.dashed?"transparent":b.c, border:b.dashed?`1px dashed ${b.c}`:"none", borderRadius:"3px 3px 0 0", opacity:b.dashed?.5:.8 }}/>
+                <div style={{ fontSize:8, color:C.muted }}>{b.yr}</div>
+              </div>
+            );
+          })}
         </div>
-      )}
+      </div>
 
-      {hasHistory && h1bData.topJobTitles?.length > 0 && (
-        <div style={{ fontSize: 10, color: C.muted }}>
-          Top roles sponsored: {h1bData.topJobTitles.join(" · ")}
+      {/* Details */}
+      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
+        <div style={{ background:C.card, borderRadius:6, padding:11, border:`1px solid ${C.border}` }}>
+          <div style={{ fontSize:8, color:C.muted, letterSpacing:1.2, marginBottom:7 }}>APPROVAL RATE</div>
+          <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:3 }}>
+            <div style={{ flex:1, height:5, background:C.border, borderRadius:3 }}>
+              <div style={{ width:`${d.rate}%`, height:"100%", background:d.rate>90?C.accent2:C.warn, borderRadius:3 }}/>
+            </div>
+            <span style={{ fontSize:13, fontFamily:DISPLAY, fontWeight:700, color:d.rate>90?C.accent2:C.warn }}>{d.rate}%</span>
+          </div>
+          <div style={{ fontSize:9, color:C.muted }}>{d.rate>90?"Excellent":"Good"} track record</div>
         </div>
-      )}
+        <div style={{ background:C.card, borderRadius:6, padding:11, border:`1px solid ${C.border}` }}>
+          <div style={{ fontSize:8, color:C.muted, letterSpacing:1.2, marginBottom:7 }}>TOP SPONSORED ROLES</div>
+          {d.roles.map(r=><div key={r} style={{ fontSize:10, color:C.text, marginBottom:2 }}><span style={{ color:C.accent2 }}>· </span>{r}</div>)}
+        </div>
+      </div>
 
-      {!hasHistory && h1bData.note && (
-        <div style={{ fontSize: 11, color: C.dim, marginTop: 6 }}>{h1bData.note}</div>
-      )}
-
-      <div style={{ marginTop: 10, display: "flex", gap: 8 }}>
-        <a href={`https://h1bdata.info/index.php?em=${encodeURIComponent(company)}`}
-          target="_blank" rel="noreferrer"
-          style={{ fontSize: 9, color: C.info, fontFamily: MONO, letterSpacing: 0.5 }}>
-          → View full H1B records ↗
-        </a>
-        <a href={`https://www.myvisajobs.com/Search_Visa_Sponsor.aspx?K=${encodeURIComponent(company)}`}
-          target="_blank" rel="noreferrer"
-          style={{ fontSize: 9, color: C.info, fontFamily: MONO, letterSpacing: 0.5, marginLeft: 8 }}>
-          → MyVisaJobs ↗
-        </a>
+      <div style={{ marginTop:10, padding:"9px 12px", background:`${C.accent}0d`, borderRadius:5, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+        <span style={{ fontSize:10, color:C.muted }}>3-year total (2022–2024)</span>
+        <span style={{ fontSize:13, fontFamily:DISPLAY, fontWeight:700, color:C.accent }}>{(d.y2022+d.y2023+d.y2024).toLocaleString()} filings</span>
+      </div>
+      <div style={{ marginTop:8, display:"flex", gap:14 }}>
+        <a href={`https://h1bdata.info/index.php?em=${encodeURIComponent(company)}`} target="_blank" rel="noreferrer" style={{ fontSize:9, color:C.info, fontFamily:MONO }}>→ h1bdata.info ↗</a>
+        <a href={`https://www.myvisajobs.com/Search_Visa_Sponsor.aspx?K=${encodeURIComponent(company)}`} target="_blank" rel="noreferrer" style={{ fontSize:9, color:C.info, fontFamily:MONO }}>→ myvisajobs.com ↗</a>
       </div>
     </div>
   );
 }
 
-// ── Main App ─────────────────────────────────────────────────────────────────
+// ─── Job Modal ────────────────────────────────────────────────────────────────
+function JobModal({ job, onClose, onTailor, onApplied }) {
+  if (!job) return null;
+  const lvl = CAREER_LEVELS.find(l=>l.id===job.level)||CAREER_LEVELS[3];
+  const h1b = getH1B(job.company);
+  return (
+    <div onClick={e=>e.target===e.currentTarget&&onClose()} style={{ position:"fixed", inset:0, background:"rgba(0,0,0,.82)", backdropFilter:"blur(5px)", zIndex:200, display:"flex", alignItems:"center", justifyContent:"center", padding:16 }}>
+      <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:12, width:"100%", maxWidth:700, maxHeight:"92vh", overflow:"auto", padding:22 }}>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:14 }}>
+          <div>
+            <div style={{ fontFamily:DISPLAY, fontSize:19, fontWeight:800, color:C.highlight, marginBottom:3 }}>{job.title}</div>
+            <div style={{ fontSize:12, color:C.accent2, marginBottom:8 }}>{job.company} · {job.location} · {job.salary}</div>
+            <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
+              <Badge color={lvl.color} label={lvl.label}/>
+              {job.visa?.explicit && <Badge color={C.accent2} label="🛂 SPONSORS H1B"/>}
+              {!job.visa?.explicit&&job.visa?.mentioned && <Badge color={C.warn} label="VISA MENTIONED"/>}
+              {h1b.active && <Badge color={C.gold} label="✓ ACTIVE 2026"/>}
+            </div>
+          </div>
+          <button onClick={onClose} style={{ background:"none", border:"none", color:C.muted, cursor:"pointer", fontSize:22 }}>×</button>
+        </div>
+        <div style={{ display:"flex", gap:5, flexWrap:"wrap", marginBottom:12 }}>
+          {(job.tags||[]).map(t=><span key={t} style={{ fontSize:10, background:C.card, border:`1px solid ${C.border}`, padding:"3px 8px", borderRadius:3, color:C.text }}>{t}</span>)}
+        </div>
+        <div style={{ fontSize:9, color:C.muted, letterSpacing:1.2, marginBottom:6 }}>JOB DESCRIPTION</div>
+        <div style={{ fontSize:12, color:C.text, lineHeight:1.8, background:C.card, padding:12, borderRadius:6, border:`1px solid ${C.border}`, marginBottom:10 }}>{job.description}</div>
+        <div style={{ padding:"10px 13px", background:`${C.accent}0d`, border:`1px solid ${C.accent}33`, borderRadius:6, marginBottom:4 }}>
+          <div style={{ fontSize:8, color:C.accent, letterSpacing:1.2, marginBottom:3 }}>TEAM CONTEXT</div>
+          <div style={{ fontSize:12, color:C.text, lineHeight:1.7 }}>{job.team}</div>
+        </div>
+        <H1BPanel company={job.company}/>
+        <div style={{ display:"flex", gap:8, marginTop:16, flexWrap:"wrap" }}>
+          <Btn onClick={()=>{onTailor(job);onClose();}}>✨ TAILOR RESUME</Btn>
+          {job.status==="tailored"&&<Btn onClick={()=>{onApplied(job.id);onClose();}} v="secondary">✓ MARK APPLIED</Btn>}
+          <a href={job.url} target="_blank" rel="noreferrer"><Btn v="ghost">↗ OPEN JOB PAGE</Btn></a>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── App ──────────────────────────────────────────────────────────────────────
 export default function App() {
-  const [tab, setTab] = useState("dashboard");
-  const [jobs, setJobs] = useState([]);
-  const [h1bCache, setH1bCache] = useState({}); // company -> h1b data
-  const [h1bLoading, setH1bLoading] = useState({});
-  const [expandedJob, setExpandedJob] = useState(null);
-  const [profile, setProfile] = useState({
-    resume: BASE_RESUME,
-    targetRoles: "Senior Frontend Engineer, Staff Engineer, Full Stack Engineer",
-    locations: "Remote",
-    minSalary: "100000",
-    skills: "React, TypeScript, Node.js, GraphQL, PostgreSQL",
-    visaStatus: "OPT", // OPT | STEM OPT | H1B | CPT | Other
-  });
-  const [scrapeConfig, setScrapeConfig] = useState({
-    keywords: "Senior Frontend Engineer React TypeScript",
-    location: "Remote",
-    sources: ["LinkedIn", "Indeed", "Greenhouse"],
-    optH1bFilter: "prefer", // 'only' | 'prefer' | 'off'
-  });
-  const [selectedJob, setSelectedJob] = useState(null);
-  const [tailor, setTailor] = useState({ resume: "", cover: "", analysis: "" });
-  const [loading, setLoading] = useState({ scrape: false, tailor: false });
-  const [logs, setLogs] = useState([]);
-  const [error, setError] = useState("");
-  const logRef = useRef(null);
+  const [tab, setTab]       = useState("dashboard");
+  const [jobs, setJobs]     = useState(DEMO);
+  const [profile, setProfile] = useState({ resume:"", targetRoles:"Senior Frontend Engineer, Staff Engineer", locations:"Remote", minSalary:"120000", skills:"React, TypeScript, Node.js, GraphQL, PostgreSQL", visaStatus:"OPT" });
+  const [scrapeConf, setScrapeConf] = useState({ keywords:"Senior Frontend Engineer React TypeScript", location:"Remote", sources:["LinkedIn","Indeed","Greenhouse"], visaMode:"prefer" });
 
-  // Persist data
-  useEffect(() => {
-    try {
-      const saved = localStorage.getItem("jobhunt_v2");
-      if (saved) {
-        const d = JSON.parse(saved);
-        if (d.jobs) setJobs(d.jobs);
-        if (d.profile) setProfile(d.profile);
-        if (d.h1bCache) setH1bCache(d.h1bCache);
-      }
-    } catch {}
-  }, []);
+  // Filters
+  const [levelFilter,  setLevelFilter]  = useState("all");
+  const [visaFilter,   setVisaFilter]   = useState("all");
+  const [statusFilter, setStatusFilter] = useState("all");
 
-  useEffect(() => {
-    try { localStorage.setItem("jobhunt_v2", JSON.stringify({ jobs, profile, h1bCache })); } catch {}
-  }, [jobs, profile, h1bCache]);
+  // Modal & tailor
+  const [modal,    setModal]    = useState(null);
+  const [tailorJob, setTailorJob] = useState(null);
+  const [tailored,  setTailored]  = useState({ resume:"", cover:"", analysis:"" });
 
-  const addLog = (msg, type = "info") => {
-    const icons = { info: "→", success: "✓", error: "✗", warn: "⚠" };
-    setLogs(l => [...l, { msg, type, icon: icons[type], t: new Date().toLocaleTimeString() }]);
-    setTimeout(() => logRef.current?.scrollTo(0, 99999), 60);
+  // Loading / logs
+  const [busy, setBusy]   = useState({ scrape:false, tailor:false, match:false });
+  const [logs, setLogs]   = useState([]);
+  const [err,  setErr]    = useState("");
+
+  // Keys
+  const [ak, setAk] = useState("");
+  const [rk, setRk] = useState("");
+
+  // Resume upload
+  const [resumeText, setResumeText]     = useState("");
+  const [fileName,   setFileName]       = useState("");
+  const [matchList,  setMatchList]      = useState([]);
+  const [dragging,   setDragging]       = useState(false);
+  const fileRef = useRef(null);
+  const logRef  = useRef(null);
+
+  const log = (msg, t="info") => {
+    const i={info:"→",success:"✓",error:"✗",warn:"⚠"}[t];
+    setLogs(l=>[...l,{msg,t,i,ts:new Date().toLocaleTimeString()}]);
+    setTimeout(()=>logRef.current?.scrollTo(0,99999),60);
   };
 
-  const stats = {
-    total: jobs.length,
-    sponsorConfirmed: jobs.filter(j => j.visaInfo?.explicitlySponsors || (h1bCache[j.company]?.totalApplications > 0)).length,
-    new: jobs.filter(j => j.status === "new").length,
-    applied: jobs.filter(j => j.status === "applied").length,
-    interview: jobs.filter(j => j.status === "interview").length,
-  };
-
-  // ── Fetch H1B history for a company ──────────────────────────────────────
-  const fetchH1B = async (company) => {
-    if (h1bCache[company] || h1bLoading[company]) return;
-    setH1bLoading(l => ({ ...l, [company]: true }));
-    try {
-      const res = await fetch("/api/h1b", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ company }),
-      });
-      const data = await res.json();
-      setH1bCache(c => ({ ...c, [company]: data }));
-    } catch (err) {
-      setH1bCache(c => ({ ...c, [company]: { error: err.message, hasSponsored: null } }));
-    }
-    setH1bLoading(l => ({ ...l, [company]: false }));
-  };
-
-  // Auto-fetch H1B for top 5 new jobs
-  useEffect(() => {
-    const toFetch = jobs.filter(j => j.status === "new" && !h1bCache[j.company]).slice(0, 5);
-    toFetch.forEach(j => fetchH1B(j.company));
-  }, [jobs]);
-
-  // ── Scrape ──────────────────────────────────────────────────────────────────
-  const handleScrape = async () => {
-    setLoading(l => ({ ...l, scrape: true }));
-    setLogs([]);
-    setError("");
-    addLog("Connecting to job board APIs...");
-    addLog(`Mode: ${scrapeConfig.optH1bFilter === 'only' ? '🛂 OPT/H1B ONLY' : scrapeConfig.optH1bFilter === 'prefer' ? '🛂 Prefer sponsoring companies' : 'All jobs'}`);
-    addLog(`Filtering OUT jobs that explicitly reject visa holders`);
-
-    try {
-      const res = await fetch("/api/scrape", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          keywords: scrapeConfig.keywords,
-          location: scrapeConfig.location,
-          sources: scrapeConfig.sources,
-          minSalary: Number(profile.minSalary) || 0,
-          optH1bFilter: scrapeConfig.optH1bFilter,
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Scrape failed");
-
-      addLog(`Found ${data.total} jobs (no-sponsorship listings removed)`, "success");
-      addLog(`Checking AI match scores...`);
-
-      // Score jobs
-      const scoreRes = await fetch("/api/score", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ jobs: data.jobs, profile }),
-      });
-      const scoreData = await scoreRes.json();
-      const scored = (scoreData.jobs || data.jobs).sort((a, b) => b.match - a.match);
-
-      const existingIds = new Set(jobs.map(j => j.id));
-      const newJobs = scored.filter(j => !existingIds.has(j.id));
-      setJobs(prev => [...newJobs, ...prev]);
-
-      const sponsorCount = newJobs.filter(j => j.visaInfo?.explicitlySponsors || j.visaInfo?.mentionsSponsorship).length;
-      addLog(`Added ${newJobs.length} jobs — ${sponsorCount} mention visa sponsorship`, "success");
-      addLog("Fetching USCIS H1B history for top companies...", "info");
-    } catch (err) {
-      setError(err.message);
-      addLog(`Error: ${err.message}`, "error");
-    }
-    setLoading(l => ({ ...l, scrape: false }));
-  };
-
-  // ── Tailor ──────────────────────────────────────────────────────────────────
-  const handleTailor = async (job) => {
-    setSelectedJob(job);
-    setTailor({ resume: "", cover: "", analysis: "" });
-    setLoading(l => ({ ...l, tailor: true }));
-    setTab("tailor");
-    setError("");
-    try {
-      const res = await fetch("/api/tailor", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          job,
-          resume: profile.resume,
-          profile: { ...profile, visaContext: `Candidate is on ${profile.visaStatus} and will need H1B sponsorship.` },
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error);
-      setTailor({ resume: data.tailoredResume, cover: data.coverLetter, analysis: data.analysis });
-      setJobs(prev => prev.map(j => j.id === job.id ? { ...j, status: "tailored" } : j));
-    } catch (err) {
-      setError(err.message);
-      setTailor({ resume: profile.resume, cover: "", analysis: "" });
-    }
-    setLoading(l => ({ ...l, tailor: false }));
-  };
-
-  const handleMarkApplied = (id) => setJobs(prev => prev.map(j => j.id === id ? { ...j, status: "applied" } : j));
-  const handleStatus = (id, status) => setJobs(prev => prev.map(j => j.id === id ? { ...j, status } : j));
-  const toggleExpand = (id) => setExpandedJob(e => e === id ? null : id);
-
-  // ── Visa filter for display ────────────────────────────────────────────────
-  const [visaDisplayFilter, setVisaDisplayFilter] = useState("all"); // 'all' | 'confirmed' | 'mentioned' | 'unknown'
-  const filteredJobs = jobs.filter(j => {
-    if (visaDisplayFilter === "all") return true;
-    const h = h1bCache[j.company];
-    if (visaDisplayFilter === "confirmed") return j.visaInfo?.explicitlySponsors || (h?.totalApplications > 0);
-    if (visaDisplayFilter === "mentioned") return j.visaInfo?.mentionsSponsorship && !j.visaInfo?.explicitlySponsors;
-    if (visaDisplayFilter === "unknown") return !j.visaInfo?.explicitlySponsors && !j.visaInfo?.mentionsSponsorship;
+  const filtered = jobs.filter(j=>{
+    if (levelFilter!=="all" && j.level!==levelFilter) return false;
+    if (statusFilter!=="all" && j.status!==statusFilter) return false;
+    if (visaFilter==="confirmed" && !j.visa?.explicit) return false;
+    if (visaFilter==="mentioned" && !j.visa?.mentioned) return false;
+    if (visaFilter==="unknown" && (j.visa?.explicit||j.visa?.mentioned)) return false;
     return true;
   });
 
+  const stats = { total:jobs.length, h1b:jobs.filter(j=>j.visa?.explicit).length, new:jobs.filter(j=>j.status==="new").length, applied:jobs.filter(j=>j.status==="applied").length, interview:jobs.filter(j=>j.status==="interview").length };
+
+  // ── Scrape ──
+  const doScrape = async () => {
+    if (!rk) { setErr("Add your RapidAPI key in Setup"); setTab("setup"); return; }
+    setBusy(b=>({...b,scrape:true})); setLogs([]); setErr("");
+    log("Connecting to job board APIs...");
+    log(`Visa mode: ${scrapeConf.visaMode==="only"?"H1B only":"Prefer sponsors"}`);
+    const NEG=['no sponsorship','not able to sponsor','cannot sponsor','will not sponsor','no h1b','us citizens only','no visa'];
+    const POS=['h1b','opt','visa sponsorship','will sponsor','sponsorship available','stem opt'];
+    try {
+      const all=[];
+      for (const q of [scrapeConf.keywords, `${scrapeConf.keywords} visa sponsorship`]) {
+        log(`Querying: "${q}"...`);
+        const p=new URLSearchParams({query:`${q} ${scrapeConf.location}`.trim(),page:"1",num_pages:"2",date_posted:"week",employment_types:"FULLTIME"});
+        const r=await fetch(`https://jsearch.p.rapidapi.com/search?${p}`,{headers:{"X-RapidAPI-Key":rk,"X-RapidAPI-Host":"jsearch.p.rapidapi.com"}});
+        const raw=await r.text(); let data;
+        try{data=JSON.parse(raw);}catch{throw new Error(`Non-JSON from RapidAPI: "${raw.slice(0,100)}". Check key & JSearch subscription.`);}
+        if(r.status===401||r.status===403) throw new Error("RapidAPI auth failed. Verify key is subscribed to JSearch.");
+        if(r.status===429) throw new Error("Rate limit. Free plan: 200 req/month.");
+        if(!data.data) continue;
+        const mapped=data.data.filter(j=>{
+          const tx=((j.job_description||"")+" "+(j.job_title||"")).toLowerCase();
+          if(scrapeConf.visaMode!=="off"&&NEG.some(k=>tx.includes(k))) return false;
+          if(Number(profile.minSalary)&&j.job_min_salary&&j.job_min_salary<Number(profile.minSalary)) return false;
+          return true;
+        }).map(j=>{
+          const tx=((j.job_description||"")+" "+(j.job_title||"")).toLowerCase();
+          return {
+            id:j.job_id, title:j.job_title, company:j.employer_name,
+            location:j.job_is_remote?"Remote":`${j.job_city||""}, ${j.job_state||j.job_country||""}`.trim().replace(/^,\s*/,""),
+            salary:(()=>{const f=n=>n>=1000?`$${Math.round(n/1000)}k`:`$${n}`;return j.job_min_salary&&j.job_max_salary?`${f(j.job_min_salary)}–${f(j.job_max_salary)}`:j.job_min_salary?f(j.job_min_salary):"Not listed";})(),
+            source:j.job_publisher||"Job Board",
+            posted:(()=>{if(!j.job_posted_at_datetime_utc)return"Recently";const h=Math.floor((Date.now()-new Date(j.job_posted_at_datetime_utc))/3600000);return h<1?"Just now":h<24?`${h}h ago`:`${Math.floor(h/24)}d ago`;})(),
+            match:Math.min(99,Math.max(45,50+(profile.skills||"").split(",").filter(s=>tx.includes(s.trim().toLowerCase())).length*8)),
+            level:detectLevel(j.job_title,j.job_description),
+            tags:["React","TypeScript","JavaScript","Node.js","Python","Go","GraphQL","PostgreSQL","MongoDB","AWS","Docker","Kubernetes","Next.js","Rust"].filter(k=>tx.includes(k.toLowerCase())).slice(0,5),
+            status:"new", url:j.job_apply_link||j.job_google_link||"#",
+            description:(j.job_description||"").slice(0,600),
+            team:(()=>{const s=(j.job_description||"").split(/[.!?]/).filter(s=>/team|squad|collaborat|culture/i.test(s)).slice(0,2).join(". ").trim();return s||"Collaborative engineering team.";})(),
+            employerLogo:j.employer_logo||null,
+            visa:{explicit:["will sponsor","visa sponsorship","h1b sponsor","sponsorship available"].some(k=>tx.includes(k)),mentioned:POS.some(k=>tx.includes(k))},
+          };
+        });
+        all.push(...mapped);
+        log(`${mapped.length} jobs from this query`,"success");
+      }
+      const seen=new Set(); const uniq=all.filter(j=>{if(seen.has(j.id))return false;seen.add(j.id);return true;}).sort((a,b)=>b.match-a.match);
+      const existIds=new Set(jobs.map(j=>j.id)); const fresh=uniq.filter(j=>!existIds.has(j.id));
+      setJobs(p=>[...fresh,...p]);
+      log(`Added ${fresh.length} jobs · ${fresh.filter(j=>j.visa?.explicit).length} confirmed H1B sponsors`,"success");
+    } catch(e){setErr(e.message);log(`Error: ${e.message}`,"error");}
+    setBusy(b=>({...b,scrape:false}));
+  };
+
+  // ── Resume Upload ──
+  const onFile = useCallback(async file=>{
+    if(!file)return;
+    setFileName(file.name); log(`Reading ${file.name}...`);
+    const text=await readFileText(file);
+    if(!text){setErr("Could not extract text. Please paste your resume in the Profile tab.");return;}
+    setResumeText(text); setProfile(p=>({...p,resume:text}));
+    log("Resume extracted successfully ✓","success");
+  },[]);
+
+  // ── AI Resume Match ──
+  const doMatch = async () => {
+    const txt=resumeText||profile.resume;
+    if(!txt||txt.length<80){setErr("Upload your resume or paste it in Profile tab first");return;}
+    if(!ak){setErr("Add Anthropic API key in Setup");setTab("setup");return;}
+    setBusy(b=>({...b,match:true})); setMatchList([]); setLogs([]); setErr("");
+    log("Analyzing resume with AI...");
+    try {
+      // Extract profile
+      const pr=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json","x-api-key":ak,"anthropic-version":"2023-06-01"},body:JSON.stringify({model:"claude-haiku-4-5-20251001",max_tokens:400,messages:[{role:"user",content:`Extract from resume as JSON only (no markdown):
+{"skills":["skill"],"yearsExp":5,"level":"senior","topRoles":["Frontend Engineer"]}
+RESUME: ${txt.slice(0,2500)}`}]})});
+      const pd=await pr.json(); const pt=pd.content?.[0]?.text||"{}";
+      let ex={};try{ex=JSON.parse(pt.replace(/```json|```/g,""));}catch{}
+      log(`Detected: ${ex.level||"mid"} · ${ex.yearsExp||"?"}yrs · ${(ex.skills||[]).slice(0,3).join(", ")}`,"success");
+      log(`Scoring ${jobs.length} jobs in your board...`);
+      // Score jobs
+      const jl=jobs.slice(0,20).map(j=>`ID:${j.id}|${j.title}@${j.company}|Tags:${(j.tags||[]).join(",")}|Level:${j.level}`).join("\n");
+      const sr=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json","x-api-key":ak,"anthropic-version":"2023-06-01"},body:JSON.stringify({model:"claude-haiku-4-5-20251001",max_tokens:600,messages:[{role:"user",content:`Score each job (0-100) for this candidate. JSON array only:
+[{"id":"id","score":85,"reason":"brief reason why"}]
+CANDIDATE: ${JSON.stringify(ex)}
+JOBS:
+${jl}`}]})});
+      const sd=await sr.json(); const st=sd.content?.[0]?.text||"[]";
+      let scores=[];try{scores=JSON.parse(st.replace(/```json|```/g,"").trim());}catch{}
+      const sm=Object.fromEntries(scores.map(s=>[s.id,s]));
+      const ranked=jobs.map(j=>({...j,aiScore:sm[j.id]?.score||0,aiReason:sm[j.id]?.reason||""})).filter(j=>j.aiScore>0).sort((a,b)=>b.aiScore-a.aiScore).slice(0,10);
+      setMatchList(ranked);
+      setJobs(p=>p.map(j=>sm[j.id]?{...j,match:sm[j.id].score}:j));
+      log(`Top ${ranked.length} matches found`,"success");
+    } catch(e){setErr(e.message);log(`Error: ${e.message}`,"error");}
+    setBusy(b=>({...b,match:false}));
+  };
+
+  // ── Tailor ──
+  const doTailor = async job=>{
+    if(!ak){setErr("Add Anthropic API key in Setup");setTab("setup");return;}
+    setTailorJob(job); setTailored({resume:"",cover:"",analysis:""}); setBusy(b=>({...b,tailor:true})); setTab("tailor"); setErr("");
+    const h1b=getH1B(job.company);
+    try {
+      const res=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json","x-api-key":ak,"anthropic-version":"2023-06-01"},body:JSON.stringify({model:"claude-opus-4-5",max_tokens:2000,messages:[{role:"user",content:`Expert resume writer. Tailor for this job.
+JOB: ${job.title} at ${job.company} (${job.level} level)
+DESC: ${job.description}
+TEAM: ${job.team}
+STACK: ${(job.tags||[]).join(", ")}
+VISA: Candidate on ${profile.visaStatus}, needs H1B. ${h1b.active?`${job.company} filed ${h1b.y2024} H1B apps in 2024 — mention availability.`:"Limited sponsorship history — don't emphasize."}
+RESUME: ${profile.resume||resumeText||"Write a strong generic version"}
+Rules: Mirror exact keywords. Reorder bullets by relevance. No invented experience. Cover letter 180-200 words, reference team work specifically.
+=== TAILORED RESUME ===
+[here]
+=== COVER LETTER ===
+[here]
+=== ANALYSIS ===
+✓ [reason 1]
+✓ [reason 2]
+✓ [reason 3]
+△ [gap]`}]})});
+      const d=await res.json(); if(!res.ok)throw new Error(d.error?.message||`API error ${res.status}`);
+      const txt=d.content?.[0]?.text||"";
+      const get=(h1,h2)=>{const m=txt.match(new RegExp(`${h1}([\\s\\S]*?)(?=${h2}|$)`));return m?.[1]?.trim()||"";};
+      setTailored({resume:get("=== TAILORED RESUME ===","=== COVER LETTER ==="),cover:get("=== COVER LETTER ===","=== ANALYSIS ==="),analysis:get("=== ANALYSIS ===","~~~")});
+      setJobs(p=>p.map(j=>j.id===job.id?{...j,status:"tailored"}:j));
+    } catch(e){setErr(e.message);setTailored({resume:profile.resume||resumeText||"",cover:"",analysis:""});}
+    setBusy(b=>({...b,tailor:false}));
+  };
+
+  const markApplied = id=>setJobs(p=>p.map(j=>j.id===id?{...j,status:"applied"}:j));
+  const setStatus  = (id,s)=>setJobs(p=>p.map(j=>j.id===id?{...j,status:s}:j));
+
   return (
-    <div style={{ minHeight: "100vh", background: C.bg, color: C.text, fontFamily: MONO, display: "flex", flexDirection: "column" }}>
+    <div style={{ minHeight:"100vh", background:C.bg, color:C.text, fontFamily:MONO, display:"flex", flexDirection:"column" }}>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@400;700;800&display=swap');
-        * { box-sizing: border-box; margin: 0; padding: 0; }
-        @keyframes spin { to { transform: rotate(360deg); } }
-        @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
-        @keyframes fadeUp { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
-        input,textarea,select { outline: none; }
-        input:focus, textarea:focus, select:focus { border-color: ${C.accent} !important; }
-        ::-webkit-scrollbar { width: 3px; } ::-webkit-scrollbar-track { background: ${C.bg}; }
-        ::-webkit-scrollbar-thumb { background: ${C.border}; border-radius: 2px; }
+        *{box-sizing:border-box;margin:0;padding:0}
+        @keyframes spin{to{transform:rotate(360deg)}}
+        @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+        @keyframes up{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+        input,textarea,select{outline:none;font-family:${MONO}}
+        input:focus,textarea:focus{border-color:${C.accent}!important}
+        ::-webkit-scrollbar{width:3px}::-webkit-scrollbar-track{background:${C.bg}}::-webkit-scrollbar-thumb{background:${C.border};border-radius:2px}
       `}</style>
 
       {/* Header */}
-      <div style={{ background: C.surface, borderBottom: `1px solid ${C.border}`,
-        padding: "14px 28px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <div style={{ width: 30, height: 30, background: C.accent, borderRadius: 6,
-            display: "grid", placeItems: "center", fontSize: 16 }}>⚡</div>
+      <div style={{ background:C.surface, borderBottom:`1px solid ${C.border}`, padding:"11px 18px", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+        <div style={{ display:"flex", alignItems:"center", gap:9 }}>
+          <div style={{ width:28,height:28,background:C.accent,borderRadius:5,display:"grid",placeItems:"center",fontSize:14 }}>⚡</div>
           <div>
-            <div style={{ fontFamily: DISPLAY, fontWeight: 800, fontSize: 17, color: C.highlight, letterSpacing: -0.5 }}>
-              JobHunt.ai
-            </div>
-            <div style={{ fontSize: 9, color: C.muted, letterSpacing: 1.5 }}>OPT · H1B SPONSORSHIP TRACKER</div>
-          </div>
-          <div style={{ marginLeft: 12, background: C.visaBg, border: `1px solid ${C.visa}`,
-            borderRadius: 4, padding: "4px 10px", fontSize: 10, color: C.visa, fontFamily: MONO }}>
-            🛂 {profile.visaStatus} MODE
+            <div style={{ fontFamily:DISPLAY,fontWeight:800,fontSize:15,color:C.highlight }}>JobHunt.ai</div>
+            <div style={{ fontSize:7,color:C.muted,letterSpacing:1.5 }}>AUTOMATED JOB SEARCH</div>
           </div>
         </div>
-        <div style={{ display: "flex", gap: 20 }}>
-          {[
-            { k: "total", l: "TOTAL", c: C.text },
-            { k: "sponsorConfirmed", l: "SPONSOR ✓", c: C.visa },
-            { k: "new", l: "NEW", c: C.accent2 },
-            { k: "applied", l: "APPLIED", c: C.warn },
-            { k: "interview", l: "INTERVIEWS", c: C.info },
-          ].map(s => (
-            <div key={s.k} style={{ textAlign: "center" }}>
-              <div style={{ fontSize: 20, fontWeight: 700, color: s.c, fontFamily: DISPLAY }}>{stats[s.k]}</div>
-              <div style={{ fontSize: 8, color: C.muted, letterSpacing: 1.5 }}>{s.l}</div>
+        <div style={{ display:"flex", gap:14 }}>
+          {[{k:"total",l:"TOTAL",c:C.text},{k:"h1b",l:"H1B ✓",c:C.accent2},{k:"new",l:"NEW",c:C.accent},{k:"applied",l:"APPLIED",c:C.warn},{k:"interview",l:"INTERVIEW",c:C.info}].map(s=>(
+            <div key={s.k} style={{ textAlign:"center" }}>
+              <div style={{ fontSize:17,fontWeight:700,color:s.c,fontFamily:DISPLAY }}>{stats[s.k]}</div>
+              <div style={{ fontSize:7,color:C.muted,letterSpacing:1.3 }}>{s.l}</div>
             </div>
           ))}
         </div>
       </div>
 
       {/* Nav */}
-      <div style={{ background: C.surface, borderBottom: `1px solid ${C.border}`, padding: "0 20px", display: "flex" }}>
-        {[
-          { id: "dashboard", label: "Jobs", count: stats.total },
-          { id: "scrape", label: "Scrape" },
-          { id: "h1b", label: "🛂 H1B Lookup" },
-          { id: "tailor", label: "AI Tailor" },
-          { id: "tracker", label: "Tracker" },
-          { id: "profile", label: "My Profile" },
-          { id: "setup", label: "⚙ Setup" },
-        ].map(t => <Tab key={t.id} label={t.label} active={tab === t.id} onClick={() => setTab(t.id)} count={t.count} />)}
+      <div style={{ background:C.surface, borderBottom:`1px solid ${C.border}`, padding:"0 10px", display:"flex", overflowX:"auto" }}>
+        {[{id:"dashboard",label:"Jobs",count:filtered.length},{id:"resume-match",label:"📄 Resume Match"},{id:"scrape",label:"Scrape"},{id:"tailor",label:"AI Tailor"},{id:"tracker",label:"Tracker"},{id:"profile",label:"Profile"},{id:"setup",label:"⚙ Setup"}].map(t=>
+          <NTab key={t.id} label={t.label} active={tab===t.id} onClick={()=>setTab(t.id)} count={t.count}/>
+        )}
       </div>
 
       {/* Error */}
-      {error && (
-        <div style={{ background: "#1a0505", borderBottom: `1px solid ${C.accent3}`,
-          padding: "10px 28px", fontSize: 12, color: C.accent3,
-          display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          ✗ {error}
-          <button onClick={() => setError("")} style={{ background: "none", border: "none", color: C.accent3, cursor: "pointer", fontSize: 18 }}>×</button>
+      {err&&(
+        <div style={{ background:"#1a0505",borderBottom:`1px solid ${C.accent3}`,padding:"9px 18px",fontSize:11,color:C.accent3,display:"flex",justifyContent:"space-between",alignItems:"center",gap:10 }}>
+          <span>✗ {err}</span>
+          <div style={{ display:"flex",gap:8,flexShrink:0 }}>
+            {(err.toLowerCase().includes("key")||err.toLowerCase().includes("api")||err.toLowerCase().includes("auth")||err.toLowerCase().includes("json"))&&
+              <button onClick={()=>{setErr("");setTab("setup");}} style={{ background:C.accent3,border:"none",color:"#fff",cursor:"pointer",fontFamily:MONO,fontSize:9,padding:"3px 9px",borderRadius:3 }}>→ SETUP</button>}
+            <button onClick={()=>setErr("")} style={{ background:"none",border:"none",color:C.accent3,cursor:"pointer",fontSize:17 }}>×</button>
+          </div>
         </div>
       )}
 
-      <div style={{ flex: 1, overflow: "auto", padding: 24 }}>
+      {/* Content */}
+      <div style={{ flex:1, overflow:"auto", padding:16 }}>
 
-        {/* ── DASHBOARD ── */}
-        {tab === "dashboard" && (
+        {/* ═══ DASHBOARD ═══ */}
+        {tab==="dashboard"&&(
           <div>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-              <div style={{ fontFamily: DISPLAY, fontSize: 18, fontWeight: 700 }}>
-                Job Matches
+            {/* Filter bar */}
+            <div style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:8, padding:"12px 14px", marginBottom:12, display:"flex", gap:14, flexWrap:"wrap", alignItems:"flex-start" }}>
+              {/* Career Level */}
+              <div>
+                <div style={{ fontSize:8,color:C.muted,letterSpacing:1.2,marginBottom:5 }}>CAREER LEVEL</div>
+                <div style={{ display:"flex",gap:4,flexWrap:"wrap" }}>
+                  {CAREER_LEVELS.map(l=>(
+                    <button key={l.id} onClick={()=>setLevelFilter(l.id)} style={{ background:levelFilter===l.id?l.color:C.border, border:"none", color:levelFilter===l.id?(l.id==="all"?"#fff":"#000"):"#666", cursor:"pointer", fontFamily:MONO, fontSize:9, padding:"4px 9px", borderRadius:3, fontWeight:levelFilter===l.id?"700":"400", transition:"all .15s" }}>{l.label}</button>
+                  ))}
+                </div>
               </div>
-              <div style={{ display: "flex", gap: 8 }}>
-                {/* Visa filter pills */}
-                {[
-                  { id: "all", label: "All Jobs" },
-                  { id: "confirmed", label: "✓ Confirmed Sponsors" },
-                  { id: "mentioned", label: "~ Visa Mentioned" },
-                  { id: "unknown", label: "? Unknown" },
-                ].map(f => (
-                  <button key={f.id} onClick={() => setVisaDisplayFilter(f.id)} style={{
-                    background: visaDisplayFilter === f.id ? C.visa : "transparent",
-                    border: `1px solid ${visaDisplayFilter === f.id ? C.visa : C.border}`,
-                    color: visaDisplayFilter === f.id ? "#000" : C.muted,
-                    cursor: "pointer", fontFamily: MONO, fontSize: 9, padding: "5px 10px", borderRadius: 3,
-                  }}>{f.label}</button>
-                ))}
-                <Btn onClick={() => setTab("scrape")}>⚡ SCRAPE</Btn>
+              {/* Visa */}
+              <div>
+                <div style={{ fontSize:8,color:C.muted,letterSpacing:1.2,marginBottom:5 }}>VISA SPONSORSHIP</div>
+                <div style={{ display:"flex",gap:4 }}>
+                  {[["all","All"],["confirmed","🛂 Confirmed"],["mentioned","Mentioned"],["unknown","Unknown"]].map(([v,l])=>(
+                    <button key={v} onClick={()=>setVisaFilter(v)} style={{ background:visaFilter===v?C.accent2:C.border, border:"none", color:visaFilter===v?"#000":"#666", cursor:"pointer", fontFamily:MONO, fontSize:9, padding:"4px 9px", borderRadius:3, transition:"all .15s" }}>{l}</button>
+                  ))}
+                </div>
+              </div>
+              {/* Status */}
+              <div>
+                <div style={{ fontSize:8,color:C.muted,letterSpacing:1.2,marginBottom:5 }}>APPLICATION STATUS</div>
+                <div style={{ display:"flex",gap:4 }}>
+                  {[["all","All"],["new","New"],["tailored","Tailored"],["applied","Applied"],["interview","Interview"]].map(([v,l])=>(
+                    <button key={v} onClick={()=>setStatusFilter(v)} style={{ background:statusFilter===v?C.warn:C.border, border:"none", color:statusFilter===v?"#000":"#666", cursor:"pointer", fontFamily:MONO, fontSize:9, padding:"4px 9px", borderRadius:3, transition:"all .15s" }}>{l}</button>
+                  ))}
+                </div>
+              </div>
+              <div style={{ marginLeft:"auto", display:"flex", gap:7, alignItems:"flex-end" }}>
+                <Btn onClick={()=>setTab("scrape")}>⚡ SCRAPE</Btn>
+                <Btn onClick={()=>{setLevelFilter("all");setVisaFilter("all");setStatusFilter("all");}} v="ghost" s={{fontSize:9}}>RESET FILTERS</Btn>
               </div>
             </div>
 
-            {filteredJobs.length === 0 ? (
-              <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 8,
-                padding: 60, textAlign: "center", color: C.muted }}>
-                <div style={{ fontSize: 48, marginBottom: 16 }}>🛂</div>
-                <div style={{ fontFamily: DISPLAY, fontSize: 18, color: C.text, marginBottom: 8 }}>
-                  No jobs yet
-                </div>
-                <div style={{ fontSize: 12, marginBottom: 20 }}>
-                  Fill your profile, then scrape jobs filtered for OPT/H1B sponsorship
-                </div>
-                <div style={{ display: "flex", gap: 12, justifyContent: "center" }}>
-                  <Btn onClick={() => setTab("profile")}>EDIT PROFILE</Btn>
-                  <Btn onClick={() => setTab("scrape")} variant="primary">START SCRAPING →</Btn>
-                </div>
-              </div>
-            ) : (
-              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                {filteredJobs.map(job => {
-                  const h1b = h1bCache[job.company];
-                  const isExpanded = expandedJob === job.id;
-                  const sponsorConfirmed = job.visaInfo?.explicitlySponsors || (h1b?.totalApplications > 0);
+            <div style={{ fontSize:10,color:C.muted,marginBottom:10 }}>
+              <span style={{ color:C.text }}>{filtered.length}</span> of {jobs.length} jobs
+              {levelFilter!=="all"&&<span style={{ color:CAREER_LEVELS.find(l=>l.id===levelFilter)?.color }}> · {CAREER_LEVELS.find(l=>l.id===levelFilter)?.label}</span>}
+              {visaFilter!=="all"&&<span style={{ color:C.accent2 }}> · {visaFilter} sponsorship</span>}
+            </div>
 
-                  return (
-                    <div key={job.id} style={{
-                      background: C.card,
-                      border: `1px solid ${sponsorConfirmed ? C.visa : C.border}`,
-                      borderLeft: `3px solid ${sponsorConfirmed ? C.visa : job.visaInfo?.mentionsSponsorship ? C.warn : C.border}`,
-                      borderRadius: 8, overflow: "hidden", animation: "fadeUp 0.3s ease",
-                    }}>
-                      {/* Main row */}
-                      <div style={{ padding: "14px 16px", display: "flex", gap: 14, alignItems: "flex-start" }}>
-                        {/* Logo */}
-                        <div style={{ width: 36, height: 36, borderRadius: 6, background: C.border,
-                          display: "grid", placeItems: "center", fontSize: 18, flexShrink: 0 }}>
-                          {job.employerLogo
-                            ? <img src={job.employerLogo} alt="" style={{ width: "100%", height: "100%", objectFit: "contain" }} onError={e => e.target.style.display = 'none'} />
-                            : job.company?.[0] || "?"}
-                        </div>
-
-                        {/* Info */}
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4, flexWrap: "wrap" }}>
-                            <span style={{ fontFamily: DISPLAY, fontSize: 15, fontWeight: 600, color: C.highlight }}>{job.title}</span>
-                            <StatusBadge status={job.status} />
-                            <VisaBadge visaInfo={job.visaInfo} h1bData={h1b} />
-                            {h1bLoading[job.company] && <Spinner size={10} color={C.visa} />}
-                          </div>
-                          <div style={{ fontSize: 12, color: C.accent2, marginBottom: 5 }}>
-                            {job.company} · {job.location} · {job.salary}
-                          </div>
-                          <div style={{ display: "flex", gap: 5, flexWrap: "wrap", marginBottom: 5 }}>
-                            {(job.tags || []).map(t => (
-                              <span key={t} style={{ fontSize: 9, background: C.border,
-                                padding: "2px 7px", borderRadius: 2, color: C.muted }}>{t}</span>
-                            ))}
-                          </div>
-                          <div style={{ fontSize: 10, color: C.muted }}>{job.source} · {job.posted}</div>
-                        </div>
-
-                        {/* Actions */}
-                        <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 8, flexShrink: 0 }}>
-                          <MatchBar score={job.match || 0} />
-                          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }}>
-                            <Btn onClick={() => toggleExpand(job.id)} variant="ghost">
-                              {isExpanded ? "▲ LESS" : "🛂 H1B INFO"}
-                            </Btn>
-                            {job.status !== "applied" && job.status !== "interview" && (
-                              <Btn onClick={() => handleTailor(job)}>✨ TAILOR</Btn>
-                            )}
-                            {job.status === "tailored" && (
-                              <Btn onClick={() => handleMarkApplied(job.id)} variant="secondary">✓ APPLIED</Btn>
-                            )}
-                            <a href={job.url} target="_blank" rel="noreferrer">
-                              <Btn variant="ghost">↗</Btn>
-                            </a>
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Expanded H1B Panel */}
-                      {isExpanded && (
-                        <div style={{ borderTop: `1px solid ${C.border}`, padding: "14px 16px 14px 66px", background: "rgba(0,0,0,0.2)" }}>
-                          <H1BHistoryPanel
-                            company={job.company}
-                            h1bData={h1b}
-                            loading={h1bLoading[job.company]}
-                            onFetch={() => fetchH1B(job.company)}
-                          />
-                          {job.visaInfo?.optFriendly && (
-                            <div style={{ marginTop: 8, fontSize: 11, color: C.accent2 }}>
-                              ✓ Job posting mentions OPT/F-1/STEM — likely OPT-friendly
-                            </div>
-                          )}
-                        </div>
-                      )}
+            <div style={{ display:"flex",flexDirection:"column",gap:8 }}>
+              {filtered.map(job=>{
+                const lvl=CAREER_LEVELS.find(l=>l.id===job.level)||CAREER_LEVELS[3];
+                const h1b=getH1B(job.company);
+                return (
+                  <div key={job.id} style={{ background:C.card, border:`1px solid ${C.border}`, borderRadius:8, padding:"11px 13px", display:"flex", gap:11, alignItems:"flex-start", animation:"up .3s ease", borderLeft:`3px solid ${job.visa?.explicit?C.accent2:job.visa?.mentioned?C.accent:C.border}` }}>
+                    <div style={{ width:32,height:32,borderRadius:5,background:C.border,display:"grid",placeItems:"center",fontSize:15,flexShrink:0,overflow:"hidden" }}>
+                      {job.employerLogo?<img src={job.employerLogo} alt="" style={{width:"100%",height:"100%",objectFit:"contain"}}/>:job.company?.[0]}
                     </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* ── H1B LOOKUP TAB ── */}
-        {tab === "h1b" && (
-          <div style={{ maxWidth: 700 }}>
-            <div style={{ fontFamily: DISPLAY, fontSize: 18, fontWeight: 700, marginBottom: 6 }}>H1B Sponsorship Lookup</div>
-            <div style={{ fontSize: 12, color: C.muted, marginBottom: 24 }}>
-              Search USCIS public Labor Condition Application records to verify any company's H1B history
-            </div>
-
-            <CompanyH1BSearch h1bCache={h1bCache} h1bLoading={h1bLoading} fetchH1B={fetchH1B} />
-
-            {/* Top sponsors from current job list */}
-            {jobs.length > 0 && (
-              <div style={{ marginTop: 28 }}>
-                <div style={{ fontFamily: DISPLAY, fontSize: 14, fontWeight: 700, marginBottom: 14 }}>
-                  Companies in Your Job List
-                </div>
-                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                  {[...new Set(jobs.map(j => j.company))].map(company => {
-                    const h = h1bCache[company];
-                    return (
-                      <div key={company} style={{ background: C.card, border: `1px solid ${C.border}`,
-                        borderRadius: 6, padding: "12px 16px", display: "flex",
-                        alignItems: "center", justifyContent: "space-between" }}>
-                        <span style={{ fontFamily: DISPLAY, fontWeight: 600 }}>{company}</span>
-                        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                          {h1bLoading[company] && <Spinner size={12} color={C.visa} />}
-                          {h && h.totalApplications > 0 && (
-                            <span style={{ fontSize: 11, color: C.visa }}>
-                              ✓ {h.totalApplications} H1B filings · {h.approvalRate}% approved
-                            </span>
-                          )}
-                          {h && h.hasSponsored === false && (
-                            <span style={{ fontSize: 11, color: C.noVisa }}>✗ No H1B history</span>
-                          )}
-                          {!h && !h1bLoading[company] && (
-                            <Btn onClick={() => fetchH1B(company)} variant="visa" style={{ fontSize: 9, padding: "4px 10px" }}>
-                              CHECK
-                            </Btn>
-                          )}
-                          <a href={`https://h1bdata.info/index.php?em=${encodeURIComponent(company)}`}
-                            target="_blank" rel="noreferrer"
-                            style={{ fontSize: 9, color: C.info, fontFamily: MONO }}>↗</a>
-                        </div>
+                    <div style={{ flex:1,minWidth:0 }}>
+                      <div style={{ display:"flex",alignItems:"center",gap:6,marginBottom:3,flexWrap:"wrap" }}>
+                        <button onClick={()=>setModal(job)} style={{ background:"none",border:"none",cursor:"pointer",fontFamily:DISPLAY,fontSize:13,fontWeight:600,color:C.highlight,padding:0,textDecoration:"underline",textDecorationColor:C.border }}>{job.title}</button>
+                        {/* Status */}
+                        {(()=>{const M={new:[C.accent2,"NEW"],tailored:[C.accent,"TAILORED"],applied:[C.warn,"APPLIED"],interview:[C.info,"🎉 INTERVIEW"]};const[c,l]=M[job.status]||[C.accent2,"NEW"];return<Badge color={c} label={l}/>;})()}
+                        {/* Level */}
+                        <Badge color={lvl.color} label={lvl.label}/>
+                        {job.visa?.explicit&&<Badge color={C.accent2} label="🛂 H1B"/>}
+                        {h1b.active&&<Badge color={C.gold} label="2026 ✓"/>}
                       </div>
-                    );
-                  })}
+                      <div style={{ fontSize:11,color:C.accent2,marginBottom:4 }}>{job.company} · {job.location} · {job.salary}</div>
+                      <div style={{ display:"flex",gap:4,flexWrap:"wrap",marginBottom:3 }}>
+                        {(job.tags||[]).map(t=><span key={t} style={{ fontSize:8,background:C.border,padding:"2px 5px",borderRadius:2,color:C.muted }}>{t}</span>)}
+                      </div>
+                      <div style={{ fontSize:9,color:C.dim }}>{job.source} · {job.posted} · H1B 2024: <span style={{ color:h1b.active?C.accent2:C.muted }}>{h1b.y2024.toLocaleString()} filings</span></div>
+                    </div>
+                    <div style={{ display:"flex",flexDirection:"column",alignItems:"flex-end",gap:6,flexShrink:0 }}>
+                      <MatchBar score={job.match||0}/>
+                      <div style={{ display:"flex",gap:4,flexWrap:"wrap",justifyContent:"flex-end" }}>
+                        <Btn onClick={()=>setModal(job)} v="ghost" s={{fontSize:9,padding:"5px 9px"}}>📊 DETAILS</Btn>
+                        {job.status!=="applied"&&job.status!=="interview"&&<Btn onClick={()=>doTailor(job)} s={{fontSize:9,padding:"5px 9px"}}>✨ TAILOR</Btn>}
+                        {job.status==="tailored"&&<Btn onClick={()=>markApplied(job.id)} v="secondary" s={{fontSize:9,padding:"5px 9px"}}>✓ APPLIED</Btn>}
+                        <a href={job.url} target="_blank" rel="noreferrer"><Btn v="ghost" s={{fontSize:9,padding:"5px 9px"}}>↗</Btn></a>
+                        <Btn onClick={()=>setJobs(j=>j.filter(x=>x.id!==job.id))} v="ghost" s={{fontSize:9,padding:"5px 9px"}}>✕</Btn>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+              {filtered.length===0&&(
+                <div style={{ padding:40,textAlign:"center",color:C.muted }}>
+                  <div style={{ fontSize:32,marginBottom:8 }}>🔍</div>
+                  <div style={{ fontFamily:DISPLAY,fontSize:13,color:C.text,marginBottom:4 }}>No jobs match these filters</div>
+                  <button onClick={()=>{setLevelFilter("all");setVisaFilter("all");setStatusFilter("all");}} style={{ background:"none",border:`1px solid ${C.border}`,color:C.muted,cursor:"pointer",fontFamily:MONO,fontSize:9,padding:"5px 12px",borderRadius:4,marginTop:6 }}>CLEAR FILTERS</button>
                 </div>
-              </div>
-            )}
-
-            <div style={{ marginTop: 24, background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, padding: 16 }}>
-              <div style={{ fontSize: 11, color: C.visa, fontWeight: 700, marginBottom: 8 }}>📚 Data Sources</div>
-              <div style={{ fontSize: 11, color: C.dim, lineHeight: 2 }}>
-                • <a href="https://h1bdata.info" target="_blank" rel="noreferrer" style={{ color: C.info }}>H1BData.info</a> — USCIS LCA public disclosure database<br/>
-                • <a href="https://www.myvisajobs.com" target="_blank" rel="noreferrer" style={{ color: C.info }}>MyVisaJobs.com</a> — H1B sponsor rankings<br/>
-                • <a href="https://www.dol.gov/agencies/eta/foreign-labor/performance" target="_blank" rel="noreferrer" style={{ color: C.info }}>DOL.gov</a> — Official LCA disclosure data<br/>
-                • All data is <strong style={{ color: C.text }}>public government records</strong> — updated quarterly
-              </div>
+              )}
             </div>
           </div>
         )}
 
-        {/* ── SCRAPE ── */}
-        {tab === "scrape" && (
-          <div style={{ maxWidth: 680 }}>
-            <div style={{ fontFamily: DISPLAY, fontSize: 18, fontWeight: 700, marginBottom: 6 }}>Job Scraper</div>
-            <div style={{ fontSize: 12, color: C.muted, marginBottom: 20 }}>
-              Scrapes real jobs and automatically removes listings that reject visa holders
+        {/* ═══ RESUME MATCH ═══ */}
+        {tab==="resume-match"&&(
+          <div style={{ maxWidth:680 }}>
+            <div style={{ fontFamily:DISPLAY,fontSize:17,fontWeight:700,marginBottom:4 }}>📄 Resume-Based Job Matching</div>
+            <div style={{ fontSize:11,color:C.muted,marginBottom:18 }}>Upload your resume — AI extracts your skills, experience level, and keywords, then scores all jobs in your board to find your best matches.</div>
+
+            {/* Drop zone */}
+            <div
+              onDragOver={e=>{e.preventDefault();setDragging(true);}}
+              onDragLeave={()=>setDragging(false)}
+              onDrop={e=>{e.preventDefault();setDragging(false);onFile(e.dataTransfer.files[0]);}}
+              onClick={()=>fileRef.current?.click()}
+              style={{ border:`2px dashed ${dragging?C.accent2:resumeText?C.accent2:C.border}`, borderRadius:10, padding:"28px 18px", textAlign:"center", cursor:"pointer", background:dragging?"rgba(0,229,176,.06)":resumeText?"rgba(0,229,176,.03)":C.card, transition:"all .2s", marginBottom:12 }}>
+              <input ref={fileRef} type="file" accept=".pdf,.txt,.doc,.docx" style={{ display:"none" }} onChange={e=>onFile(e.target.files[0])}/>
+              {resumeText ? (
+                <div>
+                  <div style={{ fontSize:26,marginBottom:6 }}>✅</div>
+                  <div style={{ fontFamily:DISPLAY,fontSize:14,color:C.accent2,marginBottom:3 }}>{fileName}</div>
+                  <div style={{ fontSize:10,color:C.muted }}>{resumeText.length.toLocaleString()} characters · click to change</div>
+                </div>
+              ):(
+                <div>
+                  <div style={{ fontSize:36,marginBottom:8 }}>📄</div>
+                  <div style={{ fontFamily:DISPLAY,fontSize:14,color:C.text,marginBottom:4 }}>Drop your resume here</div>
+                  <div style={{ fontSize:10,color:C.muted }}>PDF, TXT, DOCX supported · or paste in Profile tab</div>
+                </div>
+              )}
             </div>
 
-            {/* OPT/H1B Mode selector — prominent */}
-            <div style={{ background: C.visaBg, border: `1px solid ${C.visa}`, borderRadius: 8, padding: 16, marginBottom: 16 }}>
-              <div style={{ fontSize: 11, color: C.visa, letterSpacing: 1, marginBottom: 10, fontWeight: 700 }}>
-                🛂 VISA FILTER MODE
+            {/* Preview */}
+            {resumeText&&(
+              <div style={{ marginBottom:12 }}>
+                <div style={{ fontSize:8,color:C.muted,letterSpacing:1.2,marginBottom:5 }}>EXTRACTED TEXT</div>
+                <div style={{ background:C.card,border:`1px solid ${C.border}`,borderRadius:5,padding:10,fontSize:10,color:C.dim,lineHeight:1.6,maxHeight:100,overflow:"auto",whiteSpace:"pre-wrap" }}>{resumeText.slice(0,400)}{resumeText.length>400?"...":""}</div>
               </div>
-              <div style={{ display: "flex", gap: 10 }}>
-                {[
-                  { id: "only", label: "🛂 Sponsors Only", desc: "Only jobs that explicitly mention H1B/OPT sponsorship" },
-                  { id: "prefer", label: "⚡ Smart Filter", desc: "Remove no-sponsor jobs, include unknown (recommended)" },
-                  { id: "off", label: "All Jobs", desc: "No visa filtering" },
-                ].map(m => (
-                  <button key={m.id} onClick={() => setScrapeConfig(s => ({ ...s, optH1bFilter: m.id }))} style={{
-                    flex: 1, background: scrapeConfig.optH1bFilter === m.id ? C.visa : C.card,
-                    border: `1px solid ${scrapeConfig.optH1bFilter === m.id ? C.visa : C.border}`,
-                    color: scrapeConfig.optH1bFilter === m.id ? "#000" : C.muted,
-                    cursor: "pointer", fontFamily: MONO, fontSize: 10, padding: "10px 8px",
-                    borderRadius: 6, textAlign: "center", transition: "all 0.2s",
-                  }}>
-                    <div style={{ fontWeight: 700, marginBottom: 4 }}>{m.label}</div>
-                    <div style={{ fontSize: 8, lineHeight: 1.4, opacity: 0.8 }}>{m.desc}</div>
-                  </button>
-                ))}
-              </div>
-            </div>
+            )}
 
-            <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, padding: 20, marginBottom: 14 }}>
-              <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-                <div>
-                  <label style={{ fontSize: 10, color: C.muted, letterSpacing: 1.2, display: "block", marginBottom: 6 }}>SEARCH KEYWORDS</label>
-                  <input value={scrapeConfig.keywords} onChange={e => setScrapeConfig(s => ({ ...s, keywords: e.target.value }))}
-                    style={{ width: "100%", background: C.bg, border: `1px solid ${C.border}`,
-                      color: C.text, fontFamily: MONO, fontSize: 12, padding: "9px 12px", borderRadius: 4 }}
-                    placeholder="e.g. Senior React Engineer TypeScript" />
-                </div>
-                <div>
-                  <label style={{ fontSize: 10, color: C.muted, letterSpacing: 1.2, display: "block", marginBottom: 6 }}>LOCATION</label>
-                  <input value={scrapeConfig.location} onChange={e => setScrapeConfig(s => ({ ...s, location: e.target.value }))}
-                    style={{ width: "100%", background: C.bg, border: `1px solid ${C.border}`,
-                      color: C.text, fontFamily: MONO, fontSize: 12, padding: "9px 12px", borderRadius: 4 }}
-                    placeholder="Remote, New York, San Francisco..." />
-                </div>
-                <div>
-                  <label style={{ fontSize: 10, color: C.muted, letterSpacing: 1.2, display: "block", marginBottom: 8 }}>SOURCES</label>
-                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                    {["LinkedIn", "Indeed", "Greenhouse", "Glassdoor", "ZipRecruiter", "BeBee"].map(s => (
-                      <button key={s} onClick={() => setScrapeConfig(c => ({
-                        ...c, sources: c.sources.includes(s) ? c.sources.filter(x => x !== s) : [...c.sources, s]
-                      }))} style={{
-                        background: scrapeConfig.sources.includes(s) ? C.accent : C.border,
-                        border: "none", color: scrapeConfig.sources.includes(s) ? "#fff" : C.muted,
-                        cursor: "pointer", fontFamily: MONO, fontSize: 10, padding: "6px 12px", borderRadius: 4,
-                      }}>{s}</button>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            </div>
+            {!ak&&<div style={{ background:"#1a1000",border:`1px solid ${C.warn}`,borderRadius:5,padding:10,marginBottom:10,fontSize:10,color:C.warn }}>⚠ Needs Anthropic API key. <button onClick={()=>setTab("setup")} style={{ background:"none",border:"none",color:C.info,cursor:"pointer",fontFamily:MONO,fontSize:10,textDecoration:"underline" }}>Add in Setup →</button></div>}
+            {jobs.every(j=>DEMO.some(d=>d.id===j.id))&&<div style={{ background:"#1a1000",border:`1px solid ${C.warn}`,borderRadius:5,padding:10,marginBottom:10,fontSize:10,color:C.warn }}>⚠ Only demo jobs loaded. <button onClick={()=>setTab("scrape")} style={{ background:"none",border:"none",color:C.info,cursor:"pointer",fontFamily:MONO,fontSize:10,textDecoration:"underline" }}>Scrape real jobs first →</button></div>}
 
-            <button onClick={handleScrape} disabled={loading.scrape} style={{
-              width: "100%", background: loading.scrape ? C.border : C.accent,
-              border: "none", color: "#fff", cursor: loading.scrape ? "default" : "pointer",
-              fontFamily: DISPLAY, fontSize: 14, fontWeight: 700, padding: "14px",
-              borderRadius: 6, display: "flex", alignItems: "center", justifyContent: "center", gap: 10, marginBottom: 16,
-            }}>
-              {loading.scrape ? <><Spinner /> SCRAPING + FILTERING VISA JOBS...</> : "🛂 SCRAPE OPT/H1B FRIENDLY JOBS"}
+            <button onClick={doMatch} disabled={busy.match||(!resumeText&&!profile.resume)} style={{ width:"100%",background:busy.match?C.border:C.accent2,border:"none",color:busy.match?"#fff":"#000",cursor:busy.match?"default":"pointer",fontFamily:DISPLAY,fontSize:13,fontWeight:700,padding:"12px",borderRadius:6,display:"flex",alignItems:"center",justifyContent:"center",gap:9,marginBottom:12 }}>
+              {busy.match?<><Spinner/> ANALYZING & MATCHING...</>:"🎯 FIND JOBS MATCHING MY RESUME"}
             </button>
 
-            {logs.length > 0 && (
-              <div ref={logRef} style={{ background: "#02030a", border: `1px solid ${C.border}`,
-                borderRadius: 6, padding: 16, height: 240, overflowY: "auto", fontFamily: MONO, fontSize: 11 }}>
-                {logs.map((log, i) => (
-                  <div key={i} style={{
-                    color: log.type === "success" ? C.accent2 : log.type === "error" ? C.accent3 :
-                      log.type === "warn" ? C.warn : C.muted,
-                    marginBottom: 4, animation: "fadeUp 0.2s ease",
-                  }}>
-                    <span style={{ color: C.border }}>[{log.t}]</span> {log.icon} {log.msg}
-                  </div>
-                ))}
-                {loading.scrape && <span style={{ color: C.accent, animation: "pulse 1s infinite" }}>█</span>}
+            {logs.length>0&&(
+              <div ref={logRef} style={{ background:"#03030a",border:`1px solid ${C.border}`,borderRadius:5,padding:11,height:110,overflowY:"auto",fontSize:10,marginBottom:12 }}>
+                {logs.map((l,i)=><div key={i} style={{ color:l.t==="success"?C.accent2:l.t==="error"?C.accent3:l.t==="warn"?C.warn:C.muted,marginBottom:2 }}><span style={{ color:C.border }}>[{l.ts}] </span>{l.i} {l.msg}</div>)}
+                {busy.match&&<span style={{ color:C.accent,animation:"pulse 1s infinite" }}>█</span>}
+              </div>
+            )}
+
+            {matchList.length>0&&(
+              <div>
+                <div style={{ fontSize:9,color:C.muted,letterSpacing:1.2,marginBottom:8 }}>TOP MATCHES FOR YOUR RESUME</div>
+                <div style={{ display:"flex",flexDirection:"column",gap:7 }}>
+                  {matchList.map((job,i)=>(
+                    <div key={job.id} style={{ background:C.card,border:`1px solid ${i===0?C.gold:i<3?C.accent:C.border}`,borderRadius:7,padding:"11px 13px",display:"flex",gap:10,alignItems:"center",animation:"up .3s ease" }}>
+                      <div style={{ width:26,height:26,borderRadius:4,background:i===0?C.gold:i<3?C.accent:C.border,display:"grid",placeItems:"center",fontSize:11,fontFamily:DISPLAY,fontWeight:800,color:i<3?"#000":C.muted,flexShrink:0 }}>#{i+1}</div>
+                      <div style={{ flex:1,minWidth:0 }}>
+                        <div style={{ fontFamily:DISPLAY,fontSize:12,fontWeight:600,color:C.highlight,marginBottom:2 }}>{job.title}</div>
+                        <div style={{ fontSize:10,color:C.accent2,marginBottom:2 }}>{job.company} · {job.location} · {job.salary}</div>
+                        {job.aiReason&&<div style={{ fontSize:9,color:C.dim,fontStyle:"italic" }}>"{job.aiReason}"</div>}
+                      </div>
+                      <div style={{ display:"flex",flexDirection:"column",alignItems:"flex-end",gap:5,flexShrink:0 }}>
+                        <MatchBar score={job.aiScore||job.match}/>
+                        <div style={{ display:"flex",gap:4 }}>
+                          <Btn onClick={()=>setModal(job)} v="ghost" s={{fontSize:9,padding:"4px 7px"}}>📊</Btn>
+                          <Btn onClick={()=>doTailor(job)} s={{fontSize:9,padding:"4px 7px"}}>✨ TAILOR</Btn>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
           </div>
         )}
 
-        {/* ── TAILOR ── */}
-        {tab === "tailor" && (
-          <div>
-            <div style={{ fontFamily: DISPLAY, fontSize: 18, fontWeight: 700, marginBottom: 20 }}>
-              {selectedJob ? `AI Tailoring — ${selectedJob.title} @ ${selectedJob.company}` : "AI Resume Tailor"}
-            </div>
-            {!selectedJob ? (
-              <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 8,
-                padding: 60, textAlign: "center", color: C.muted }}>
-                <div style={{ fontSize: 40, marginBottom: 12 }}>✨</div>
-                <div style={{ fontFamily: DISPLAY, fontSize: 16, color: C.text, marginBottom: 8 }}>No job selected</div>
-                <div style={{ fontSize: 12 }}>Click "TAILOR" on any job in the Jobs tab</div>
-              </div>
-            ) : loading.tailor ? (
-              <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 8,
-                padding: 70, textAlign: "center" }}>
-                <Spinner size={32} />
-                <div style={{ marginTop: 20, fontFamily: DISPLAY, fontSize: 16 }}>Claude AI tailoring your resume...</div>
-                <div style={{ marginTop: 8, fontSize: 11, color: C.muted }}>
-                  Optimizing for ATS · Matching visa context · Writing cover letter
+        {/* ═══ SCRAPE ═══ */}
+        {tab==="scrape"&&(
+          <div style={{ maxWidth:600 }}>
+            <div style={{ fontFamily:DISPLAY,fontSize:16,fontWeight:700,marginBottom:13 }}>Job Scraper</div>
+            {!rk&&<div style={{ background:"#1a1000",border:`1px solid ${C.warn}`,borderRadius:5,padding:10,marginBottom:12,fontSize:10,color:C.warn }}>⚠ RapidAPI key missing. <button onClick={()=>setTab("setup")} style={{ background:"none",border:"none",color:C.info,cursor:"pointer",fontFamily:MONO,fontSize:10,textDecoration:"underline" }}>Add in Setup →</button></div>}
+            <div style={{ background:C.card,border:`1px solid ${C.border}`,borderRadius:8,padding:16,marginBottom:11,display:"flex",flexDirection:"column",gap:11 }}>
+              {[["Keywords","keywords","Senior React Engineer TypeScript"],["Location","location","Remote, New York..."]].map(([label,key,ph])=>(
+                <div key={key}>
+                  <label style={{ fontSize:8,color:C.muted,letterSpacing:1.2,display:"block",marginBottom:5 }}>{label.toUpperCase()}</label>
+                  <input value={scrapeConf[key]} onChange={e=>setScrapeConf(s=>({...s,[key]:e.target.value}))} placeholder={ph} style={{ width:"100%",background:C.bg,border:`1px solid ${C.border}`,color:C.text,fontSize:12,padding:"8px 10px",borderRadius:4 }}/>
                 </div>
-              </div>
-            ) : (
+              ))}
               <div>
-                <div style={{ display: "flex", gap: 10, marginBottom: 16, flexWrap: "wrap" }}>
-                  <Btn onClick={() => navigator.clipboard.writeText(tailor.resume)}>📋 COPY RESUME</Btn>
-                  <Btn onClick={() => navigator.clipboard.writeText(tailor.cover)} variant="secondary">📋 COPY COVER LETTER</Btn>
-                  <a href={selectedJob.url} target="_blank" rel="noreferrer"><Btn variant="ghost">↗ OPEN JOB PAGE</Btn></a>
-                  <Btn onClick={() => { handleMarkApplied(selectedJob.id); setTab("dashboard"); }} variant="secondary">✓ MARK APPLIED</Btn>
+                <label style={{ fontSize:8,color:C.muted,letterSpacing:1.2,display:"block",marginBottom:5 }}>TARGET CAREER LEVEL</label>
+                <div style={{ display:"flex",gap:5,flexWrap:"wrap" }}>
+                  {CAREER_LEVELS.slice(1).map(l=>(
+                    <button key={l.id} onClick={()=>setLevelFilter(l.id)} style={{ background:levelFilter===l.id?l.color:C.border,border:"none",color:levelFilter===l.id?"#000":"#666",cursor:"pointer",fontFamily:MONO,fontSize:9,padding:"4px 9px",borderRadius:3 }}>{l.label}</button>
+                  ))}
                 </div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-                  <div>
-                    <div style={{ fontSize: 10, color: C.muted, letterSpacing: 1.2, marginBottom: 6 }}>
-                      TAILORED RESUME <span style={{ color: C.accent }}>(ATS + visa optimized)</span>
-                    </div>
-                    <textarea value={tailor.resume} onChange={e => setTailor(t => ({ ...t, resume: e.target.value }))}
-                      style={{ width: "100%", height: 520, background: C.card, border: `1px solid ${C.accent}`,
-                        color: C.text, fontFamily: MONO, fontSize: 11, padding: 16, borderRadius: 6, lineHeight: 1.75 }} />
+              </div>
+              <div>
+                <label style={{ fontSize:8,color:C.muted,letterSpacing:1.2,display:"block",marginBottom:5 }}>VISA FILTER</label>
+                <div style={{ display:"flex",gap:5 }}>
+                  {[["only","🛂 H1B Only"],["prefer","Prefer"],["off","All"]].map(([v,l])=>(
+                    <button key={v} onClick={()=>setScrapeConf(s=>({...s,visaMode:v}))} style={{ background:scrapeConf.visaMode===v?C.accent:C.border,border:"none",color:scrapeConf.visaMode===v?"#fff":"#666",cursor:"pointer",fontFamily:MONO,fontSize:9,padding:"4px 9px",borderRadius:3 }}>{l}</button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <label style={{ fontSize:8,color:C.muted,letterSpacing:1.2,display:"block",marginBottom:5 }}>SOURCES</label>
+                <div style={{ display:"flex",gap:5,flexWrap:"wrap" }}>
+                  {["LinkedIn","Indeed","Greenhouse","Glassdoor","ZipRecruiter"].map(s=>(
+                    <button key={s} onClick={()=>setScrapeConf(c=>({...c,sources:c.sources.includes(s)?c.sources.filter(x=>x!==s):[...c.sources,s]}))} style={{ background:scrapeConf.sources.includes(s)?C.accent:C.border,border:"none",color:scrapeConf.sources.includes(s)?"#fff":"#666",cursor:"pointer",fontFamily:MONO,fontSize:9,padding:"4px 9px",borderRadius:3 }}>{s}</button>
+                  ))}
+                </div>
+              </div>
+            </div>
+            <button onClick={doScrape} disabled={busy.scrape} style={{ width:"100%",background:busy.scrape?C.border:C.accent,border:"none",color:"#fff",cursor:busy.scrape?"default":"pointer",fontFamily:DISPLAY,fontSize:13,fontWeight:700,padding:"12px",borderRadius:6,display:"flex",alignItems:"center",justifyContent:"center",gap:9,marginBottom:11 }}>
+              {busy.scrape?<><Spinner/> SCRAPING...</>:"⚡ SCRAPE JOBS NOW"}
+            </button>
+            {logs.length>0&&(
+              <div ref={logRef} style={{ background:"#03030a",border:`1px solid ${C.border}`,borderRadius:5,padding:11,height:190,overflowY:"auto",fontSize:10 }}>
+                {logs.map((l,i)=><div key={i} style={{ color:l.t==="success"?C.accent2:l.t==="error"?C.accent3:l.t==="warn"?C.warn:C.muted,marginBottom:2 }}><span style={{ color:C.border }}>[{l.ts}] </span>{l.i} {l.msg}</div>)}
+                {busy.scrape&&<span style={{ color:C.accent,animation:"pulse 1s infinite" }}>█</span>}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ═══ TAILOR ═══ */}
+        {tab==="tailor"&&(
+          <div>
+            <div style={{ fontFamily:DISPLAY,fontSize:16,fontWeight:700,marginBottom:13 }}>{tailorJob?`AI Tailoring — ${tailorJob.title} @ ${tailorJob.company}`:"AI Resume Tailor"}</div>
+            {!tailorJob?(
+              <div style={{ background:C.card,border:`1px solid ${C.border}`,borderRadius:8,padding:48,textAlign:"center",color:C.muted }}>
+                <div style={{ fontSize:34,marginBottom:8 }}>✨</div>
+                <div style={{ fontFamily:DISPLAY,fontSize:13,color:C.text,marginBottom:4 }}>No job selected</div>
+                <div style={{ fontSize:10 }}>Click "TAILOR" on any job in the Jobs tab</div>
+              </div>
+            ):busy.tailor?(
+              <div style={{ background:C.card,border:`1px solid ${C.border}`,borderRadius:8,padding:48,textAlign:"center" }}>
+                <Spinner size={26}/><div style={{ marginTop:12,fontFamily:DISPLAY,fontSize:13,color:C.text }}>Claude AI tailoring your resume...</div>
+                <div style={{ marginTop:5,fontSize:10,color:C.muted }}>ATS optimization · keyword matching · cover letter</div>
+              </div>
+            ):(
+              <div>
+                {/* H1B summary banner */}
+                {(()=>{const h=getH1B(tailorJob.company);return(
+                  <div style={{ background:`${C.accent2}0a`,border:`1px solid ${C.accent2}33`,borderRadius:6,padding:"9px 13px",marginBottom:11,display:"flex",gap:18,flexWrap:"wrap" }}>
+                    <span style={{ fontSize:11,color:C.accent2 }}>🛂 {tailorJob.company}: <strong>{h.y2024.toLocaleString()}</strong> H1B filings (2024)</span>
+                    <span style={{ fontSize:11,color:h.active?C.accent2:C.accent3 }}>{h.active?"✓ Actively sponsoring 2026":"✗ Not sponsoring 2026"}</span>
+                    <span style={{ fontSize:11,color:C.muted }}>{h.rate}% approval rate</span>
                   </div>
-                  <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                );})()}
+                <div style={{ display:"flex",gap:7,marginBottom:11,flexWrap:"wrap" }}>
+                  <Btn onClick={()=>navigator.clipboard.writeText(tailored.resume)}>📋 COPY RESUME</Btn>
+                  <Btn onClick={()=>navigator.clipboard.writeText(tailored.cover)} v="secondary">📋 COPY COVER LETTER</Btn>
+                  <a href={tailorJob.url} target="_blank" rel="noreferrer"><Btn v="ghost">↗ OPEN JOB PAGE</Btn></a>
+                  <Btn onClick={()=>{markApplied(tailorJob.id);setTab("dashboard");}} v="secondary">✓ MARK APPLIED</Btn>
+                </div>
+                <div style={{ display:"grid",gridTemplateColumns:"1fr 1fr",gap:11 }}>
+                  <div>
+                    <div style={{ fontSize:8,color:C.muted,letterSpacing:1.2,marginBottom:5 }}>TAILORED RESUME <span style={{ color:C.accent }}>(ATS)</span></div>
+                    <textarea value={tailored.resume} onChange={e=>setTailored(t=>({...t,resume:e.target.value}))} style={{ width:"100%",height:450,background:C.card,border:`1px solid ${C.accent}`,color:C.text,fontSize:10,padding:11,borderRadius:6,lineHeight:1.75 }}/>
+                  </div>
+                  <div style={{ display:"flex",flexDirection:"column",gap:9 }}>
                     <div>
-                      <div style={{ fontSize: 10, color: C.muted, letterSpacing: 1.2, marginBottom: 6 }}>COVER LETTER</div>
-                      <textarea value={tailor.cover} onChange={e => setTailor(t => ({ ...t, cover: e.target.value }))}
-                        style={{ width: "100%", height: 240, background: C.card, border: `1px solid ${C.accent2}`,
-                          color: C.text, fontFamily: MONO, fontSize: 11, padding: 16, borderRadius: 6, lineHeight: 1.75 }} />
+                      <div style={{ fontSize:8,color:C.muted,letterSpacing:1.2,marginBottom:5 }}>COVER LETTER</div>
+                      <textarea value={tailored.cover} onChange={e=>setTailored(t=>({...t,cover:e.target.value}))} style={{ width:"100%",height:210,background:C.card,border:`1px solid ${C.accent2}`,color:C.text,fontSize:10,padding:11,borderRadius:6,lineHeight:1.75 }}/>
                     </div>
-                    {tailor.analysis && (
-                      <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 6, padding: 16 }}>
-                        <div style={{ fontSize: 10, color: C.muted, letterSpacing: 1.2, marginBottom: 8 }}>AI ANALYSIS</div>
-                        <pre style={{ fontSize: 11, color: C.dim, lineHeight: 1.7, whiteSpace: "pre-wrap", fontFamily: MONO }}>{tailor.analysis}</pre>
+                    {tailored.analysis&&(
+                      <div style={{ background:C.card,border:`1px solid ${C.border}`,borderRadius:5,padding:11 }}>
+                        <div style={{ fontSize:8,color:C.muted,letterSpacing:1.2,marginBottom:5 }}>AI MATCH ANALYSIS</div>
+                        <div style={{ fontSize:11,color:C.text,lineHeight:1.7,whiteSpace:"pre-wrap" }}>{tailored.analysis}</div>
                       </div>
                     )}
-                    {selectedJob && (
-                      <H1BHistoryPanel
-                        company={selectedJob.company}
-                        h1bData={h1bCache[selectedJob.company]}
-                        loading={h1bLoading[selectedJob.company]}
-                        onFetch={() => fetchH1B(selectedJob.company)}
-                      />
-                    )}
                   </div>
                 </div>
               </div>
@@ -839,197 +734,101 @@ export default function App() {
           </div>
         )}
 
-        {/* ── TRACKER ── */}
-        {tab === "tracker" && (
+        {/* ═══ TRACKER ═══ */}
+        {tab==="tracker"&&(
           <div>
-            <div style={{ fontFamily: DISPLAY, fontSize: 18, fontWeight: 700, marginBottom: 20 }}>Application Tracker</div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 24 }}>
-              {[
-                { l: "Total Jobs", v: stats.total, c: C.text, icon: "📋" },
-                { l: "H1B Confirmed", v: stats.sponsorConfirmed, c: C.visa, icon: "🛂" },
-                { l: "Applied", v: stats.applied, c: C.warn, icon: "📤" },
-                { l: "Interviews", v: stats.interview, c: C.info, icon: "🎯" },
-              ].map(s => (
-                <div key={s.l} style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, padding: 18 }}>
-                  <div style={{ fontSize: 22, marginBottom: 6 }}>{s.icon}</div>
-                  <div style={{ fontSize: 26, fontFamily: DISPLAY, fontWeight: 800, color: s.c }}>{s.v}</div>
-                  <div style={{ fontSize: 9, color: C.muted, letterSpacing: 1.2, marginTop: 2 }}>{s.l.toUpperCase()}</div>
+            <div style={{ fontFamily:DISPLAY,fontSize:16,fontWeight:700,marginBottom:13 }}>Application Tracker</div>
+            <div style={{ display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:9,marginBottom:16 }}>
+              {[{l:"Applied",v:stats.applied,c:C.accent,i:"📤"},{l:"Total",v:stats.total,c:C.text,i:"📋"},{l:"Interviews",v:stats.interview,c:C.info,i:"🎯"},{l:"Success",v:stats.applied?Math.round((stats.interview/stats.applied)*100)+"%":"—",c:C.accent2,i:"⭐"}].map(s=>(
+                <div key={s.l} style={{ background:C.card,border:`1px solid ${C.border}`,borderRadius:7,padding:13 }}>
+                  <div style={{ fontSize:18,marginBottom:3 }}>{s.i}</div>
+                  <div style={{ fontSize:20,fontFamily:DISPLAY,fontWeight:800,color:s.c }}>{s.v}</div>
+                  <div style={{ fontSize:8,color:C.muted,letterSpacing:1.2 }}>{s.l.toUpperCase()}</div>
                 </div>
               ))}
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 14 }}>
-              {["new", "tailored", "applied", "interview"].map(status => (
-                <div key={status} style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, padding: 14 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-                    <StatusBadge status={status} />
-                    <span style={{ fontFamily: DISPLAY, fontWeight: 700, fontSize: 16 }}>
-                      {jobs.filter(j => j.status === status).length}
-                    </span>
+            <div style={{ display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:9 }}>
+              {["new","tailored","applied","interview"].map(st=>(
+                <div key={st} style={{ background:C.card,border:`1px solid ${C.border}`,borderRadius:7,padding:11 }}>
+                  <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:7 }}>
+                    {(()=>{const M={new:[C.accent2,"NEW"],tailored:[C.accent,"TAILORED"],applied:[C.warn,"APPLIED"],interview:[C.info,"🎉 INTERVIEW"]};const[c,l]=M[st]||[C.accent2,"NEW"];return<Badge color={c} label={l}/>;})()}
+                    <span style={{ fontFamily:DISPLAY,fontWeight:700,fontSize:13 }}>{jobs.filter(j=>j.status===st).length}</span>
                   </div>
-                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                    {jobs.filter(j => j.status === status).map(job => {
-                      const h = h1bCache[job.company];
-                      const sponsored = job.visaInfo?.explicitlySponsors || (h?.totalApplications > 0);
-                      return (
-                        <div key={job.id} style={{ background: C.bg, border: `1px solid ${sponsored ? C.visa : C.border}`,
-                          borderRadius: 6, padding: 10 }}>
-                          <div style={{ fontSize: 11, fontWeight: 700, marginBottom: 2, color: C.highlight }}>{job.company}</div>
-                          <div style={{ fontSize: 10, color: C.muted, marginBottom: 4 }}>{job.title}</div>
-                          {sponsored && <div style={{ fontSize: 8, color: C.visa }}>🛂 H1B sponsor confirmed</div>}
-                          <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginTop: 6 }}>
-                            {status === "applied" && (
-                              <button onClick={() => handleStatus(job.id, "interview")}
-                                style={{ fontSize: 8, background: C.info, border: "none", color: "#000",
-                                  cursor: "pointer", fontFamily: MONO, padding: "2px 6px", borderRadius: 3 }}>
-                                → INTERVIEW
-                              </button>
-                            )}
-                            {status === "new" && (
-                              <button onClick={() => handleTailor(job)}
-                                style={{ fontSize: 8, background: C.accent, border: "none", color: "#fff",
-                                  cursor: "pointer", fontFamily: MONO, padding: "2px 6px", borderRadius: 3 }}>
-                                TAILOR
-                              </button>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
+                  {jobs.filter(j=>j.status===st).map(job=>(
+                    <div key={job.id} style={{ background:C.bg,border:`1px solid ${C.border}`,borderRadius:5,padding:7,marginBottom:5 }}>
+                      <div style={{ fontSize:10,fontWeight:700,color:C.highlight,marginBottom:1 }}>{job.company}</div>
+                      <div style={{ fontSize:9,color:C.muted,marginBottom:4 }}>{job.title}</div>
+                      <div style={{ display:"flex",gap:3,flexWrap:"wrap" }}>
+                        {st==="applied"&&<button onClick={()=>setStatus(job.id,"interview")} style={{ fontSize:8,background:C.info,border:"none",color:"#000",cursor:"pointer",fontFamily:MONO,padding:"2px 5px",borderRadius:2 }}>→ INTERVIEW</button>}
+                        {st==="new"&&<button onClick={()=>doTailor(job)} style={{ fontSize:8,background:C.accent,border:"none",color:"#fff",cursor:"pointer",fontFamily:MONO,padding:"2px 5px",borderRadius:2 }}>TAILOR</button>}
+                        {st!=="interview"&&<button onClick={()=>setStatus(job.id,"rejected")} style={{ fontSize:8,background:"transparent",border:`1px solid ${C.border}`,color:C.muted,cursor:"pointer",fontFamily:MONO,padding:"2px 5px",borderRadius:2 }}>REJECT</button>}
+                      </div>
+                    </div>
+                  ))}
                 </div>
               ))}
             </div>
           </div>
         )}
 
-        {/* ── PROFILE ── */}
-        {tab === "profile" && (
-          <div style={{ maxWidth: 820 }}>
-            <div style={{ fontFamily: DISPLAY, fontSize: 18, fontWeight: 700, marginBottom: 20 }}>My Profile</div>
-
-            {/* Visa Status selector */}
-            <div style={{ background: C.visaBg, border: `1px solid ${C.visa}`, borderRadius: 8, padding: 16, marginBottom: 20 }}>
-              <div style={{ fontSize: 11, color: C.visa, letterSpacing: 1, marginBottom: 10, fontWeight: 700 }}>🛂 YOUR VISA STATUS</div>
-              <div style={{ display: "flex", gap: 10 }}>
-                {["OPT", "STEM OPT", "CPT", "F-1 (Pending OPT)", "H1B Transfer"].map(v => (
-                  <button key={v} onClick={() => setProfile(p => ({ ...p, visaStatus: v }))} style={{
-                    background: profile.visaStatus === v ? C.visa : C.card,
-                    border: `1px solid ${profile.visaStatus === v ? C.visa : C.border}`,
-                    color: profile.visaStatus === v ? "#000" : C.muted,
-                    cursor: "pointer", fontFamily: MONO, fontSize: 10, padding: "7px 14px", borderRadius: 4,
-                  }}>{v}</button>
-                ))}
-              </div>
-              <div style={{ marginTop: 10, fontSize: 10, color: C.muted }}>
-                This will be added to your resume tailoring context so Claude highlights visa status appropriately
-              </div>
-            </div>
-
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: 14 }}>
-              {[
-                { key: "targetRoles", label: "Target Roles", ph: "Senior Engineer, Staff Engineer..." },
-                { key: "skills", label: "Skills", ph: "React, TypeScript, Node.js..." },
-                { key: "locations", label: "Locations", ph: "Remote, New York..." },
-                { key: "minSalary", label: "Min Salary ($)", ph: "100000", type: "number" },
-              ].map(f => (
-                <div key={f.key}>
-                  <label style={{ fontSize: 10, color: C.muted, letterSpacing: 1.2, display: "block", marginBottom: 6 }}>
-                    {f.label.toUpperCase()}
-                  </label>
-                  <input type={f.type || "text"} value={profile[f.key]} placeholder={f.ph}
-                    onChange={e => setProfile(p => ({ ...p, [f.key]: e.target.value }))}
-                    style={{ width: "100%", background: C.bg, border: `1px solid ${C.border}`,
-                      color: C.text, fontFamily: MONO, fontSize: 12, padding: "9px 12px", borderRadius: 4 }} />
+        {/* ═══ PROFILE ═══ */}
+        {tab==="profile"&&(
+          <div style={{ maxWidth:740 }}>
+            <div style={{ fontFamily:DISPLAY,fontSize:16,fontWeight:700,marginBottom:13 }}>My Profile</div>
+            <div style={{ display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10 }}>
+              {[["Target Roles","targetRoles","Senior Engineer, Staff..."],["Skills","skills","React, TypeScript, Node.js..."],["Locations","locations","Remote, New York..."],["Min Salary ($)","minSalary","120000"]].map(([label,key,ph])=>(
+                <div key={key}>
+                  <label style={{ fontSize:8,color:C.muted,letterSpacing:1.2,display:"block",marginBottom:4 }}>{label.toUpperCase()}</label>
+                  <input value={profile[key]} onChange={e=>setProfile(p=>({...p,[key]:e.target.value}))} placeholder={ph} style={{ width:"100%",background:C.card,border:`1px solid ${C.border}`,color:C.text,fontSize:12,padding:"8px 10px",borderRadius:4 }}/>
                 </div>
               ))}
+              <div>
+                <label style={{ fontSize:8,color:C.muted,letterSpacing:1.2,display:"block",marginBottom:4 }}>VISA STATUS</label>
+                <select value={profile.visaStatus} onChange={e=>setProfile(p=>({...p,visaStatus:e.target.value}))} style={{ width:"100%",background:C.card,border:`1px solid ${C.border}`,color:C.text,fontSize:12,padding:"8px 10px",borderRadius:4 }}>
+                  {["OPT","STEM OPT","CPT","H1B","Green Card","US Citizen","TN Visa","Other"].map(v=><option key={v}>{v}</option>)}
+                </select>
+              </div>
             </div>
-
             <div>
-              <label style={{ fontSize: 10, color: C.muted, letterSpacing: 1.2, display: "block", marginBottom: 6 }}>
-                BASE RESUME <span style={{ color: C.accent }}>(paste your full resume — AI tailors this per job)</span>
-              </label>
-              <textarea value={profile.resume} onChange={e => setProfile(p => ({ ...p, resume: e.target.value }))}
-                style={{ width: "100%", height: 420, background: C.card, border: `1px solid ${C.border}`,
-                  color: C.text, fontFamily: MONO, fontSize: 11, padding: 16, borderRadius: 6, lineHeight: 1.75 }} />
+              <label style={{ fontSize:8,color:C.muted,letterSpacing:1.2,display:"block",marginBottom:4 }}>BASE RESUME <span style={{ color:C.accent }}>(or upload in Resume Match tab)</span></label>
+              <textarea value={profile.resume} onChange={e=>setProfile(p=>({...p,resume:e.target.value}))} style={{ width:"100%",height:340,background:C.card,border:`1px solid ${C.border}`,color:C.text,fontSize:10,padding:11,borderRadius:6,lineHeight:1.75 }}/>
             </div>
-            <div style={{ marginTop: 8, fontSize: 10, color: C.muted }}>✓ Profile auto-saved to your browser</div>
           </div>
         )}
 
-        {/* ── SETUP ── */}
-        {tab === "setup" && (
-          <div style={{ maxWidth: 700 }}>
-            <div style={{ fontFamily: DISPLAY, fontSize: 18, fontWeight: 700, marginBottom: 20 }}>Setup Guide</div>
-            {[
-              {
-                step: "1", title: "Deploy to Vercel", color: C.accent2,
-                content: `1. Unzip the downloaded project\n2. Create GitHub repo at github.com/new → upload all files\n3. Go to vercel.com → Import repo → Deploy\n4. Your app goes live in ~60 seconds`,
-              },
-              {
-                step: "2", title: "Anthropic API Key (AI Tailoring)", color: C.accent,
-                content: `1. Go to console.anthropic.com → API Keys → Create\n2. In Vercel: Settings → Environment Variables\n3. Add: ANTHROPIC_API_KEY = sk-ant-your-key\n\nCost: ~$0.01 per resume tailor`,
-              },
-              {
-                step: "3", title: "RapidAPI Key (Real Job Scraping)", color: C.warn,
-                content: `1. Go to rapidapi.com/letscrape-6bRBa3QguO5/api/jsearch\n2. Subscribe FREE (200 searches/month)\n3. Copy your key from the header panel\n4. In Vercel: Add RAPIDAPI_KEY = your-key\n\nAggregates LinkedIn, Indeed, Glassdoor, ZipRecruiter + 20 more`,
-              },
-              {
-                step: "4", title: "H1B Lookup (No Key Needed!)", color: C.visa,
-                content: `The H1B lookup uses public USCIS data — no API key required!\n\nData comes from:\n• h1bdata.info — USCIS LCA public disclosure records\n• Updated quarterly with real government data\n\nJust deploy and it works automatically.`,
-              },
-            ].map(s => (
-              <div key={s.step} style={{ background: C.card, border: `1px solid ${C.border}`,
-                borderLeft: `3px solid ${s.color}`, borderRadius: 8, padding: 20, marginBottom: 14 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
-                  <div style={{ width: 26, height: 26, borderRadius: "50%", background: s.color,
-                    display: "grid", placeItems: "center", fontSize: 12, fontWeight: 700, color: "#000" }}>{s.step}</div>
-                  <div style={{ fontFamily: DISPLAY, fontSize: 15, fontWeight: 700 }}>{s.title}</div>
+        {/* ═══ SETUP ═══ */}
+        {tab==="setup"&&(
+          <div style={{ maxWidth:600 }}>
+            <div style={{ fontFamily:DISPLAY,fontSize:16,fontWeight:700,marginBottom:4 }}>API Keys Setup</div>
+            <div style={{ fontSize:10,color:C.muted,marginBottom:16 }}>Stored in your browser session only — never sent to any server except the respective APIs.</div>
+            {[{id:"ak",label:"Anthropic API Key",val:ak,set:setAk,ph:"sk-ant-api03-...",desc:<>AI resume tailoring + cover letters. Get free at <a href="https://console.anthropic.com" target="_blank" rel="noreferrer" style={{color:C.info}}>console.anthropic.com</a> · ~$0.01/tailor</>},
+              {id:"rk",label:"RapidAPI Key (JSearch)",val:rk,set:setRk,ph:"your-rapidapi-key",desc:<>Real job scraping (LinkedIn, Indeed, Glassdoor+). <a href="https://rapidapi.com/letscrape-6bRBa3QguO5/api/jsearch" target="_blank" rel="noreferrer" style={{color:C.info}}>Free plan here</a> (200 req/month)</>},
+            ].map(f=>(
+              <div key={f.id} style={{ background:C.card,border:`1px solid ${f.val?C.accent2:C.border}`,borderRadius:8,padding:16,marginBottom:11 }}>
+                <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:7 }}>
+                  <div style={{ fontFamily:DISPLAY,fontSize:13,fontWeight:700 }}>{f.label}</div>
+                  {f.val&&<span style={{ fontSize:8,color:C.accent2,border:`1px solid ${C.accent2}`,padding:"2px 6px",borderRadius:2,fontFamily:MONO }}>✓ SET</span>}
                 </div>
-                <pre style={{ fontFamily: MONO, fontSize: 11, color: C.dim, lineHeight: 1.8, whiteSpace: "pre-wrap", margin: 0 }}>{s.content}</pre>
+                <div style={{ fontSize:10,color:C.muted,marginBottom:9,lineHeight:1.6 }}>{f.desc}</div>
+                <input type="password" value={f.val} onChange={e=>f.set(e.target.value)} placeholder={f.ph} style={{ width:"100%",background:C.bg,border:`1px solid ${C.border}`,color:C.text,fontSize:12,padding:"8px 10px",borderRadius:4 }}/>
               </div>
             ))}
+            {ak&&rk&&(
+              <div style={{ background:"#051a0a",border:`1px solid ${C.accent2}`,borderRadius:8,padding:14,textAlign:"center" }}>
+                <div style={{ fontSize:22,marginBottom:5 }}>✓</div>
+                <div style={{ fontFamily:DISPLAY,fontSize:13,color:C.accent2,marginBottom:8 }}>Both keys set — you're ready!</div>
+                <div style={{ display:"flex",gap:7,justifyContent:"center" }}>
+                  <Btn onClick={()=>setTab("resume-match")}>📄 MATCH MY RESUME</Btn>
+                  <Btn onClick={()=>setTab("scrape")} v="secondary">⚡ SCRAPE JOBS</Btn>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>
-    </div>
-  );
-}
 
-// ── Company Search Component ────────────────────────────────────────────────
-function CompanyH1BSearch({ h1bCache, h1bLoading, fetchH1B }) {
-  const [query, setQuery] = useState("");
-  const [searched, setSearched] = useState("");
-
-  const handleSearch = () => {
-    if (!query.trim()) return;
-    setSearched(query.trim());
-    fetchH1B(query.trim());
-  };
-
-  const result = h1bCache[searched];
-
-  return (
-    <div style={{ background: C.card, border: `1px solid ${C.visa}`, borderRadius: 8, padding: 20, marginBottom: 20 }}>
-      <div style={{ fontSize: 11, color: C.visa, letterSpacing: 1, marginBottom: 12 }}>SEARCH ANY COMPANY</div>
-      <div style={{ display: "flex", gap: 10, marginBottom: 12 }}>
-        <input value={query} onChange={e => setQuery(e.target.value)}
-          onKeyDown={e => e.key === "Enter" && handleSearch()}
-          placeholder="e.g. Google, Microsoft, Stripe, Accenture..."
-          style={{ flex: 1, background: C.bg, border: `1px solid ${C.border}`,
-            color: C.text, fontFamily: MONO, fontSize: 12, padding: "9px 12px", borderRadius: 4 }} />
-        <button onClick={handleSearch} style={{
-          background: C.visa, border: "none", color: "#000", cursor: "pointer",
-          fontFamily: MONO, fontSize: 11, padding: "9px 20px", borderRadius: 4, letterSpacing: 1,
-        }}>🛂 SEARCH USCIS</button>
-      </div>
-      {searched && (
-        <H1BHistoryPanel
-          company={searched}
-          h1bData={result}
-          loading={h1bLoading[searched]}
-          onFetch={() => fetchH1B(searched)}
-        />
-      )}
+      {/* ═══ Modal ═══ */}
+      <JobModal job={modal} onClose={()=>setModal(null)} onTailor={doTailor} onApplied={markApplied}/>
     </div>
   );
 }

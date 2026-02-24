@@ -1,15 +1,14 @@
 {
-  "buildCommand": "npm run build",
-  "outputDirectory": "dist",
   "functions": {
     "api/*.js": {
       "maxDuration": 30
     }
   },
-  "routes": [
-    { "src": "/api/(.*)", "dest": "/api/$1" },
-    { "src": "/(.*)", "dest": "/dist/$1" },
-    { "src": "/", "dest": "/dist/index.html" }
+  "rewrites": [
+    { "source": "/api/scrape", "destination": "/api/scrape" },
+    { "source": "/api/tailor", "destination": "/api/tailor" },
+    { "source": "/api/score",  "destination": "/api/score"  },
+    { "source": "/api/h1b",    "destination": "/api/h1b"    },
+    { "source": "/((?!api/).*)", "destination": "/index.html" }
   ]
 }
-
