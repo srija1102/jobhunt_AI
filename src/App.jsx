@@ -263,7 +263,7 @@ export default function App() {
   const [tab, setTab]       = useState("dashboard");
   const [jobs, setJobs]     = useState(DEMO);
   const [profile, setProfile] = useState({ resume:"", targetRoles:"Senior Frontend Engineer, Staff Engineer", locations:"Remote", minSalary:"120000", skills:"React, TypeScript, Node.js, GraphQL, PostgreSQL", visaStatus:"OPT" });
-  const [scrapeConf, setScrapeConf] = useState({ keywords:"Senior Frontend Engineer React TypeScript", location:"Remote", sources:["LinkedIn","Indeed","Greenhouse"], visaMode:"prefer" });
+  const [scrapeConf, setScrapeConf] = useState({ keywords:"", location:"Remote", sources:[], visaMode:"prefer", dateRange:"month" });
 
   // Filters
   const [levelFilter,  setLevelFilter]  = useState("all");
@@ -312,53 +312,101 @@ export default function App() {
   // ── Scrape ──
   const doScrape = async () => {
     if (!rk) { setErr("Add your RapidAPI key in Setup"); setTab("setup"); return; }
+    const kw = scrapeConf.keywords.trim() || profile.targetRoles.split(",")[0].trim();
+    if (!kw) { setErr("Enter keywords or fill in Target Roles in your Profile"); return; }
     setBusy(b=>({...b,scrape:true})); setLogs([]); setErr("");
     log("Connecting to job board APIs...");
-    log(`Visa mode: ${scrapeConf.visaMode==="only"?"H1B only":"Prefer sponsors"}`);
-    const NEG=['no sponsorship','not able to sponsor','cannot sponsor','will not sponsor','no h1b','us citizens only','no visa'];
-    const POS=['h1b','opt','visa sponsorship','will sponsor','sponsorship available','stem opt'];
+    log(`Searching: "${kw}" · ${scrapeConf.location} · ${scrapeConf.dateRange === "month" ? "past month" : scrapeConf.dateRange === "week" ? "past week" : "all time"}`);
+
+    const NEG = ['no sponsorship','not able to sponsor','cannot sponsor','will not sponsor','no h1b','us citizens only','no visa','us citizenship required','citizen or green card'];
+    const POS = ['h1b','h-1b','opt','visa sponsorship','will sponsor','sponsorship available','stem opt','we sponsor','immigration support'];
+    const isRemote = scrapeConf.location.toLowerCase().includes('remote');
+
+    // Build query list — include Dice as an explicit site query if selected
+    const queries = [kw];
+    if (scrapeConf.visaMode !== 'off') queries.push(`${kw} visa sponsorship`);
+    if (scrapeConf.sources.includes('Dice')) queries.push(`${kw} site:dice.com`);
+
     try {
-      const all=[];
-      for (const q of [scrapeConf.keywords, `${scrapeConf.keywords} visa sponsorship`]) {
+      const all = [];
+      for (const q of queries) {
         log(`Querying: "${q}"...`);
-        const p=new URLSearchParams({query:`${q} ${scrapeConf.location}`.trim(),page:"1",num_pages:"2",date_posted:"week",employment_types:"FULLTIME"});
-        const r=await fetch(`https://jsearch.p.rapidapi.com/search?${p}`,{headers:{"X-RapidAPI-Key":rk,"X-RapidAPI-Host":"jsearch.p.rapidapi.com"}});
-        const raw=await r.text(); let data;
-        try{data=JSON.parse(raw);}catch{throw new Error(`Non-JSON from RapidAPI: "${raw.slice(0,100)}". Check key & JSearch subscription.`);}
-        if(r.status===401||r.status===403) throw new Error("RapidAPI auth failed. Verify key is subscribed to JSearch.");
-        if(r.status===429) throw new Error("Rate limit. Free plan: 200 req/month.");
-        if(!data.data) continue;
-        const mapped=data.data.filter(j=>{
-          const tx=((j.job_description||"")+" "+(j.job_title||"")).toLowerCase();
-          if(scrapeConf.visaMode!=="off"&&NEG.some(k=>tx.includes(k))) return false;
-          if(Number(profile.minSalary)&&j.job_min_salary&&j.job_min_salary<Number(profile.minSalary)) return false;
+        const params = new URLSearchParams({
+          query: `${q} ${scrapeConf.location}`.trim(),
+          page: '1', num_pages: '3',
+          date_posted: scrapeConf.dateRange,
+          employment_types: 'FULLTIME',
+        });
+        if (isRemote) params.set('remote_jobs_only', 'true');
+
+        const r = await fetch(`https://jsearch.p.rapidapi.com/search?${params}`, {
+          headers: { 'X-RapidAPI-Key': rk, 'X-RapidAPI-Host': 'jsearch.p.rapidapi.com' },
+        });
+        const raw = await r.text(); let data;
+        try { data = JSON.parse(raw); } catch { throw new Error(`Non-JSON from RapidAPI: "${raw.slice(0,100)}". Check key & JSearch subscription.`); }
+        if (r.status===401||r.status===403) throw new Error("RapidAPI auth failed. Verify key is subscribed to JSearch.");
+        if (r.status===429) throw new Error("Rate limit reached. Free plan: 200 req/month.");
+        if (!data.data || data.data.length === 0) {
+          log(`No results for "${q}" — try broader keywords or a different date range`, "warn");
+          continue;
+        }
+
+        const mapped = data.data.filter(j => {
+          const tx = ((j.job_description||'') + ' ' + (j.job_title||'')).toLowerCase();
+          // Remove explicit no-sponsorship postings
+          if (scrapeConf.visaMode !== 'off' && NEG.some(k => tx.includes(k))) return false;
+          // H1B-only mode: require at least one positive sponsorship signal
+          if (scrapeConf.visaMode === 'only' && !POS.some(k => tx.includes(k))) return false;
+          // Salary floor
+          if (Number(profile.minSalary) && j.job_min_salary && j.job_min_salary < Number(profile.minSalary)) return false;
+          // Source filter — only applied when user has selected specific sources
+          if (scrapeConf.sources.length > 0) {
+            const pub = (j.job_publisher || '').toLowerCase();
+            const activeSources = scrapeConf.sources.filter(s => s !== 'Dice'); // Dice handled via query
+            if (activeSources.length > 0 && !activeSources.some(s => pub.includes(s.toLowerCase()))) return false;
+          }
           return true;
-        }).map(j=>{
-          const tx=((j.job_description||"")+" "+(j.job_title||"")).toLowerCase();
+        }).map(j => {
+          const tx = ((j.job_description||'') + ' ' + (j.job_title||'')).toLowerCase();
           return {
-            id:j.job_id, title:j.job_title, company:j.employer_name,
-            location:j.job_is_remote?"Remote":`${j.job_city||""}, ${j.job_state||j.job_country||""}`.trim().replace(/^,\s*/,""),
-            salary:(()=>{const f=n=>n>=1000?`$${Math.round(n/1000)}k`:`$${n}`;return j.job_min_salary&&j.job_max_salary?`${f(j.job_min_salary)}–${f(j.job_max_salary)}`:j.job_min_salary?f(j.job_min_salary):"Not listed";})(),
-            source:j.job_publisher||"Job Board",
-            posted:(()=>{if(!j.job_posted_at_datetime_utc)return"Recently";const h=Math.floor((Date.now()-new Date(j.job_posted_at_datetime_utc))/3600000);return h<1?"Just now":h<24?`${h}h ago`:`${Math.floor(h/24)}d ago`;})(),
-            match:Math.min(99,Math.max(45,50+(profile.skills||"").split(",").filter(s=>tx.includes(s.trim().toLowerCase())).length*8)),
-            level:detectLevel(j.job_title,j.job_description),
-            tags:["React","TypeScript","JavaScript","Node.js","Python","Go","GraphQL","PostgreSQL","MongoDB","AWS","Docker","Kubernetes","Next.js","Rust"].filter(k=>tx.includes(k.toLowerCase())).slice(0,5),
-            status:"new", url:j.job_apply_link||j.job_google_link||"#",
-            description:(j.job_description||"").slice(0,600),
-            team:(()=>{const s=(j.job_description||"").split(/[.!?]/).filter(s=>/team|squad|collaborat|culture/i.test(s)).slice(0,2).join(". ").trim();return s||"Collaborative engineering team.";})(),
-            employerLogo:j.employer_logo||null,
-            visa:{explicit:["will sponsor","visa sponsorship","h1b sponsor","sponsorship available"].some(k=>tx.includes(k)),mentioned:POS.some(k=>tx.includes(k))},
+            id: j.job_id, title: j.job_title, company: j.employer_name,
+            location: j.job_is_remote ? 'Remote' : `${j.job_city||''}, ${j.job_state||j.job_country||''}`.trim().replace(/^,\s*/,''),
+            salary: (()=>{ const f=n=>n>=1000?`$${Math.round(n/1000)}k`:`$${n}`; return j.job_min_salary&&j.job_max_salary?`${f(j.job_min_salary)}–${f(j.job_max_salary)}`:j.job_min_salary?f(j.job_min_salary):'Not listed'; })(),
+            source: j.job_publisher || 'Job Board',
+            posted: (()=>{ if(!j.job_posted_at_datetime_utc)return'Recently'; const h=Math.floor((Date.now()-new Date(j.job_posted_at_datetime_utc))/3600000); return h<1?'Just now':h<24?`${h}h ago`:`${Math.floor(h/24)}d ago`; })(),
+            match: Math.min(99, Math.max(45, 50+(profile.skills||'').split(',').filter(s=>tx.includes(s.trim().toLowerCase())).length*8)),
+            level: detectLevel(j.job_title, j.job_description),
+            tags: ['React','TypeScript','JavaScript','Node.js','Python','Go','GraphQL','PostgreSQL','MongoDB','AWS','Docker','Kubernetes','Next.js','Rust'].filter(k=>tx.includes(k.toLowerCase())).slice(0,5),
+            status: 'new', url: j.job_apply_link||j.job_google_link||'#',
+            description: (j.job_description||'').slice(0,600),
+            team: (()=>{ const s=(j.job_description||'').split(/[.!?]/).filter(s=>/team|squad|collaborat|culture/i.test(s)).slice(0,2).join('. ').trim(); return s||'Collaborative engineering team.'; })(),
+            employerLogo: j.employer_logo||null,
+            visa: {
+              explicit: ['will sponsor','visa sponsorship','h1b sponsor','sponsorship available','we sponsor'].some(k=>tx.includes(k)),
+              mentioned: POS.some(k=>tx.includes(k)),
+            },
           };
         });
+
         all.push(...mapped);
-        log(`${mapped.length} jobs from this query`,"success");
+        log(`${mapped.length} jobs from "${q}"`, mapped.length > 0 ? "success" : "warn");
       }
-      const seen=new Set(); const uniq=all.filter(j=>{if(seen.has(j.id))return false;seen.add(j.id);return true;}).sort((a,b)=>b.match-a.match);
-      const existIds=new Set(jobs.map(j=>j.id)); const fresh=uniq.filter(j=>!existIds.has(j.id));
-      setJobs(p=>[...fresh,...p]);
-      log(`Added ${fresh.length} jobs · ${fresh.filter(j=>j.visa?.explicit).length} confirmed H1B sponsors`,"success");
-    } catch(e){setErr(e.message);log(`Error: ${e.message}`,"error");}
+
+      const seen = new Set();
+      const uniq = all.filter(j => { if(seen.has(j.id))return false; seen.add(j.id); return true; }).sort((a,b)=>b.match-a.match);
+      const existIds = new Set(jobs.map(j=>j.id));
+      const fresh = uniq.filter(j=>!existIds.has(j.id));
+
+      if (fresh.length === 0) {
+        log("No new jobs found. Try: broader keywords · longer date range · Visa Filter = All", "warn");
+        setErr("No results. Try broader keywords, set date range to 'Any time', or set Visa Filter to All.");
+      } else {
+        setJobs(p=>[...fresh,...p]);
+        // Reset dashboard filters so freshly scraped jobs are always visible
+        setLevelFilter("all"); setVisaFilter("all"); setStatusFilter("all");
+        log(`Added ${fresh.length} jobs · ${fresh.filter(j=>j.visa?.explicit).length} confirmed H1B sponsors`, "success");
+      }
+    } catch(e) { setErr(e.message); log(`Error: ${e.message}`, "error"); }
     setBusy(b=>({...b,scrape:false}));
   };
 
@@ -672,35 +720,46 @@ Rules: Mirror exact keywords. Reorder bullets by relevance. No invented experien
             <div style={{ fontFamily:DISPLAY,fontSize:16,fontWeight:700,marginBottom:13 }}>Job Scraper</div>
             {!rk&&<div style={{ background:"#1a1000",border:`1px solid ${C.warn}`,borderRadius:5,padding:10,marginBottom:12,fontSize:10,color:C.warn }}>⚠ RapidAPI key missing. <button onClick={()=>setTab("setup")} style={{ background:"none",border:"none",color:C.info,cursor:"pointer",fontFamily:MONO,fontSize:10,textDecoration:"underline" }}>Add in Setup →</button></div>}
             <div style={{ background:C.card,border:`1px solid ${C.border}`,borderRadius:8,padding:16,marginBottom:11,display:"flex",flexDirection:"column",gap:11 }}>
-              {[["Keywords","keywords","Senior React Engineer TypeScript"],["Location","location","Remote, New York..."]].map(([label,key,ph])=>(
-                <div key={key}>
-                  <label style={{ fontSize:8,color:C.muted,letterSpacing:1.2,display:"block",marginBottom:5 }}>{label.toUpperCase()}</label>
-                  <input value={scrapeConf[key]} onChange={e=>setScrapeConf(s=>({...s,[key]:e.target.value}))} placeholder={ph} style={{ width:"100%",background:C.bg,border:`1px solid ${C.border}`,color:C.text,fontSize:12,padding:"8px 10px",borderRadius:4 }}/>
-                </div>
-              ))}
+              {/* Keywords */}
               <div>
-                <label style={{ fontSize:8,color:C.muted,letterSpacing:1.2,display:"block",marginBottom:5 }}>TARGET CAREER LEVEL</label>
-                <div style={{ display:"flex",gap:5,flexWrap:"wrap" }}>
-                  {CAREER_LEVELS.slice(1).map(l=>(
-                    <button key={l.id} onClick={()=>setLevelFilter(l.id)} style={{ background:levelFilter===l.id?l.color:C.border,border:"none",color:levelFilter===l.id?"#000":"#666",cursor:"pointer",fontFamily:MONO,fontSize:9,padding:"4px 9px",borderRadius:3 }}>{l.label}</button>
+                <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:5 }}>
+                  <label style={{ fontSize:8,color:C.muted,letterSpacing:1.2 }}>KEYWORDS</label>
+                  <button onClick={()=>setScrapeConf(s=>({...s,keywords:profile.targetRoles.split(",")[0].trim()+(profile.skills?` ${profile.skills.split(",").slice(0,3).map(x=>x.trim()).join(" ")}`:"")}))} style={{ background:"none",border:`1px solid ${C.accent}`,color:C.accent,cursor:"pointer",fontFamily:MONO,fontSize:8,padding:"2px 7px",borderRadius:3 }}>✦ Auto-fill from profile</button>
+                </div>
+                <input value={scrapeConf.keywords} onChange={e=>setScrapeConf(s=>({...s,keywords:e.target.value}))} placeholder={profile.targetRoles?`e.g. ${profile.targetRoles.split(",")[0].trim()}`:"Senior React Engineer TypeScript"} style={{ width:"100%",background:C.bg,border:`1px solid ${C.border}`,color:C.text,fontSize:12,padding:"8px 10px",borderRadius:4 }}/>
+              </div>
+              {/* Location */}
+              <div>
+                <label style={{ fontSize:8,color:C.muted,letterSpacing:1.2,display:"block",marginBottom:5 }}>LOCATION</label>
+                <input value={scrapeConf.location} onChange={e=>setScrapeConf(s=>({...s,location:e.target.value}))} placeholder="Remote, New York, San Francisco..." style={{ width:"100%",background:C.bg,border:`1px solid ${C.border}`,color:C.text,fontSize:12,padding:"8px 10px",borderRadius:4 }}/>
+              </div>
+              {/* Date range */}
+              <div>
+                <label style={{ fontSize:8,color:C.muted,letterSpacing:1.2,display:"block",marginBottom:5 }}>DATE POSTED</label>
+                <div style={{ display:"flex",gap:5 }}>
+                  {[["week","Past week"],["month","Past month"],["all","Any time"]].map(([v,l])=>(
+                    <button key={v} onClick={()=>setScrapeConf(s=>({...s,dateRange:v}))} style={{ background:scrapeConf.dateRange===v?C.info:C.border,border:"none",color:scrapeConf.dateRange===v?"#000":"#666",cursor:"pointer",fontFamily:MONO,fontSize:9,padding:"4px 9px",borderRadius:3 }}>{l}</button>
                   ))}
                 </div>
               </div>
+              {/* Visa filter */}
               <div>
-                <label style={{ fontSize:8,color:C.muted,letterSpacing:1.2,display:"block",marginBottom:5 }}>VISA FILTER</label>
+                <label style={{ fontSize:8,color:C.muted,letterSpacing:1.2,display:"block",marginBottom:5 }}>VISA SPONSORSHIP</label>
                 <div style={{ display:"flex",gap:5 }}>
-                  {[["only","🛂 H1B Only"],["prefer","Prefer"],["off","All"]].map(([v,l])=>(
+                  {[["only","🛂 H1B Only"],["prefer","Prefer"],["off","All jobs"]].map(([v,l])=>(
                     <button key={v} onClick={()=>setScrapeConf(s=>({...s,visaMode:v}))} style={{ background:scrapeConf.visaMode===v?C.accent:C.border,border:"none",color:scrapeConf.visaMode===v?"#fff":"#666",cursor:"pointer",fontFamily:MONO,fontSize:9,padding:"4px 9px",borderRadius:3 }}>{l}</button>
                   ))}
                 </div>
               </div>
+              {/* Sources */}
               <div>
-                <label style={{ fontSize:8,color:C.muted,letterSpacing:1.2,display:"block",marginBottom:5 }}>SOURCES</label>
+                <label style={{ fontSize:8,color:C.muted,letterSpacing:1.2,display:"block",marginBottom:5 }}>FILTER BY SOURCE <span style={{ color:C.border,fontWeight:400 }}>(empty = search all platforms)</span></label>
                 <div style={{ display:"flex",gap:5,flexWrap:"wrap" }}>
-                  {["LinkedIn","Indeed","Greenhouse","Glassdoor","ZipRecruiter"].map(s=>(
+                  {["LinkedIn","Indeed","Glassdoor","ZipRecruiter","Greenhouse","Lever","Dice","Wellfound"].map(s=>(
                     <button key={s} onClick={()=>setScrapeConf(c=>({...c,sources:c.sources.includes(s)?c.sources.filter(x=>x!==s):[...c.sources,s]}))} style={{ background:scrapeConf.sources.includes(s)?C.accent:C.border,border:"none",color:scrapeConf.sources.includes(s)?"#fff":"#666",cursor:"pointer",fontFamily:MONO,fontSize:9,padding:"4px 9px",borderRadius:3 }}>{s}</button>
                   ))}
                 </div>
+                {scrapeConf.sources.length===0&&<div style={{ fontSize:9,color:C.muted,marginTop:5 }}>Searching LinkedIn, Indeed, Glassdoor, Greenhouse, Lever, ZipRecruiter + company career pages</div>}
               </div>
             </div>
             <button onClick={doScrape} disabled={busy.scrape} style={{ width:"100%",background:busy.scrape?C.border:C.accent,border:"none",color:"#fff",cursor:busy.scrape?"default":"pointer",fontFamily:DISPLAY,fontSize:13,fontWeight:700,padding:"12px",borderRadius:6,display:"flex",alignItems:"center",justifyContent:"center",gap:9,marginBottom:11 }}>
