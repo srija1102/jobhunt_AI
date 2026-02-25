@@ -1,4 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from "react";
+import * as pdfjsLib from "pdfjs-dist";
+import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
+pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl;
 
 const C = {
   bg: "#080810", surface: "#0d0d1a", card: "#111120", border: "#1c1c32",
@@ -54,19 +57,51 @@ function detectLevel(title="", desc="") {
 }
 
 async function readFileText(file) {
+  // Plain text — read directly
+  if (file.type === "text/plain") {
+    return new Promise(res => {
+      const r = new FileReader();
+      r.onerror = () => res(null);
+      r.onload = e => res(e.target.result || null);
+      r.readAsText(file);
+    });
+  }
+
+  // PDF — use PDF.js to decode compressed content streams
+  if (file.type === "application/pdf") {
+    return new Promise(res => {
+      const r = new FileReader();
+      r.onerror = () => res(null);
+      r.onload = async e => {
+        try {
+          const typedArray = new Uint8Array(e.target.result);
+          const pdf = await pdfjsLib.getDocument({ data: typedArray }).promise;
+          let text = "";
+          for (let i = 1; i <= pdf.numPages; i++) {
+            const page = await pdf.getPage(i);
+            const content = await page.getTextContent();
+            text += content.items.map(item => item.str).join(" ") + "\n";
+          }
+          const trimmed = text.trim();
+          res(trimmed.length > 80 ? trimmed : null);
+        } catch {
+          res(null);
+        }
+      };
+      r.readAsArrayBuffer(file);
+    });
+  }
+
+  // DOCX / other — best-effort binary string extraction
   return new Promise(res => {
     const r = new FileReader();
-    if (file.type === "text/plain") {
-      r.onload = e => res(e.target.result);
-      r.readAsText(file);
-    } else {
-      r.onload = e => {
-        const raw = e.target.result || "";
-        const clean = raw.replace(/[^\x20-\x7E\n\r\t]/g," ").replace(/\s{4,}/g,"\n").trim();
-        res(clean.length > 80 ? clean : null);
-      };
-      r.readAsBinaryString(file);
-    }
+    r.onerror = () => res(null);
+    r.onload = e => {
+      const raw = e.target.result || "";
+      const clean = raw.replace(/[^\x20-\x7E\n\r\t]/g," ").replace(/\s{4,}/g,"\n").trim();
+      res(clean.length > 80 ? clean : null);
+    };
+    r.readAsBinaryString(file);
   });
 }
 
