@@ -47,13 +47,80 @@ function getH1B(company) {
 }
 
 function detectLevel(title="", desc="") {
-  const t = (title+" "+desc).toLowerCase();
-  if (/\bdirector\b|vp of|head of|engineering manager|\b12\+|\b15\+/.test(t)) return "director";
-  if (/\bstaff\b|principal|tech lead|\b8\+|\b9\+|\b10\+/.test(t)) return "staff";
-  if (/\bsenior\b|\bsr\.?\b|\b5\+|\b6\+|\b7\+/.test(t)) return "senior";
-  if (/junior|\bentry\b|new grad|0-2 year|\b1\+|\b2\+/.test(t)) return "entry";
-  if (/\b3\+|\b4\+|mid.level|intermediate/.test(t)) return "mid";
+  // Step 1: title is the most reliable signal — check it first in isolation
+  const t = title.toLowerCase();
+  if (/\b(director|vp|vice.president|head of eng|engineering manager|cto|svp|evp)\b/.test(t)) return "director";
+  if (/\b(staff|principal|distinguished|fellow)\b/.test(t)) return "staff";
+  if (/\b(senior|sr)\b/.test(t)) return "senior";
+  if (/\b(junior|jr|entry.?level|associate engineer|intern|new.?grad)\b/.test(t)) return "entry";
+  if (/\b(mid.?level|intermediate|engineer ii|sde ii|swe ii)\b/.test(t)) return "mid";
+
+  // Step 2: look for explicit "X+ years experience" in the description only
+  // Use context-aware regex so "5+ member team" doesn't trigger a senior match
+  const expMatch = desc.match(/(\d+)\s*(?:\+|-\d+)?\s*years?\s+(?:of\s+)?(?:professional\s+|relevant\s+|software\s+)?(?:experience|exp)\b/i);
+  if (expMatch) {
+    const yrs = parseInt(expMatch[1]);
+    if (yrs >= 12) return "director";
+    if (yrs >= 8)  return "staff";
+    if (yrs >= 5)  return "senior";
+    if (yrs >= 3)  return "mid";
+    return "entry";
+  }
+
+  // Step 3: check only the first 250 chars of desc for role-level phrases
+  const d = desc.slice(0, 250).toLowerCase();
+  if (/new grad|entry.?level|junior developer|early career|0.?2 years/.test(d)) return "entry";
+  if (/\bstaff engineer\b|\bprincipal engineer\b/.test(d)) return "staff";
+
   return "mid";
+}
+
+// ─── Sponsorship Classifier ────────────────────────────────────────────────────
+// Weighted rule-based scorer that catches negatives before positives,
+// uses explicit multi-word phrases, and returns a confidence score.
+function classifySponsorship(title="", desc="") {
+  const text = (title + " " + desc).toLowerCase();
+
+  // Hard negatives — disqualify immediately with no further checks
+  const HARD_NEG = [
+    "no sponsorship","not able to sponsor","cannot sponsor","will not sponsor",
+    "unable to sponsor","sponsorship not available","no visa sponsorship",
+    "us citizens only","citizens and permanent residents only","citizen or green card only",
+    "no h1b","no h-1b","h1b not available","us citizenship required",
+    "must be authorized to work in the us","not eligible for sponsorship",
+    "we do not sponsor","does not sponsor","sponsorship is not","cannot provide sponsorship",
+  ];
+  if (HARD_NEG.some(k => text.includes(k))) {
+    return { explicit: false, mentioned: false, score: 0, confidence: "high" };
+  }
+
+  // Explicit multi-word phrases — very high confidence
+  const EXPLICIT = [
+    "will sponsor h1b","h1b sponsorship","sponsor h1b visa","h-1b sponsorship",
+    "visa sponsorship provided","visa sponsorship available","we sponsor visas",
+    "sponsorship is available","actively sponsor","provide visa sponsorship",
+    "immigration sponsorship","we will sponsor","sponsoring h1b","h1b sponsor",
+    "employer will sponsor","sponsorship provided","visa support provided",
+  ];
+  if (EXPLICIT.some(k => text.includes(k))) {
+    return { explicit: true, mentioned: true, score: 95, confidence: "high" };
+  }
+
+  // Positive signals — count matches; more signals = higher confidence
+  const POS_SIGNALS = [
+    ["h1b",2], ["h-1b",2], ["visa sponsorship",3], ["will sponsor",3],
+    ["sponsorship available",3], ["stem opt",2], ["we sponsor",2],
+    ["immigration support",2], ["f-1 visa",1], ["opt eligible",1],
+    ["open to sponsorship",3], ["visa support",2],
+    ["international candidates welcome",2], ["work authorization assistance",2],
+  ];
+  const posScore = POS_SIGNALS.reduce((acc, [k, w]) => text.includes(k) ? acc + w : acc, 0);
+
+  if (posScore >= 5) return { explicit: false, mentioned: true,  score: 80, confidence: "medium" };
+  if (posScore >= 2) return { explicit: false, mentioned: true,  score: 60, confidence: "low"    };
+  if (posScore >= 1) return { explicit: false, mentioned: false, score: 40, confidence: "low"    };
+
+  return { explicit: false, mentioned: false, score: 15, confidence: "low" };
 }
 
 async function readFileText(file) {
@@ -263,7 +330,7 @@ export default function App() {
   const [tab, setTab]       = useState("dashboard");
   const [jobs, setJobs]     = useState(DEMO);
   const [profile, setProfile] = useState({ resume:"", targetRoles:"Senior Frontend Engineer, Staff Engineer", locations:"Remote", minSalary:"120000", skills:"React, TypeScript, Node.js, GraphQL, PostgreSQL", visaStatus:"OPT" });
-  const [scrapeConf, setScrapeConf] = useState({ keywords:"", location:"Remote", sources:[], visaMode:"prefer", dateRange:"month" });
+  const [scrapeConf, setScrapeConf] = useState({ keywords:"", location:"Remote", sources:[], visaMode:"prefer", dateRange:"month", careerLevel:"all" });
 
   // Filters
   const [levelFilter,  setLevelFilter]  = useState("all");
@@ -276,7 +343,7 @@ export default function App() {
   const [tailored,  setTailored]  = useState({ resume:"", cover:"", analysis:"" });
 
   // Loading / logs
-  const [busy, setBusy]   = useState({ scrape:false, tailor:false, match:false });
+  const [busy, setBusy]   = useState({ scrape:false, tailor:false, match:false, h1b:false });
   const [logs, setLogs]   = useState([]);
   const [err,  setErr]    = useState("");
 
@@ -318,14 +385,17 @@ export default function App() {
     log("Connecting to job board APIs...");
     log(`Searching: "${kw}" · ${scrapeConf.location} · ${scrapeConf.dateRange === "month" ? "past month" : scrapeConf.dateRange === "week" ? "past week" : "all time"}`);
 
-    const NEG = ['no sponsorship','not able to sponsor','cannot sponsor','will not sponsor','no h1b','us citizens only','no visa','us citizenship required','citizen or green card'];
-    const POS = ['h1b','h-1b','opt','visa sponsorship','will sponsor','sponsorship available','stem opt','we sponsor','immigration support'];
     const isRemote = scrapeConf.location.toLowerCase().includes('remote');
 
+    // Inject career level terms into the query so JSearch returns fewer off-level results
+    const LEVEL_TERMS = { entry:"junior OR entry level", mid:"", senior:"senior", staff:"staff engineer OR principal engineer", director:"director OR engineering manager" };
+    const levelTerm = scrapeConf.careerLevel !== "all" ? (LEVEL_TERMS[scrapeConf.careerLevel] || "") : "";
+    const baseQuery = levelTerm ? `${kw} ${levelTerm}` : kw;
+
     // Build query list — include Dice as an explicit site query if selected
-    const queries = [kw];
-    if (scrapeConf.visaMode !== 'off') queries.push(`${kw} visa sponsorship`);
-    if (scrapeConf.sources.includes('Dice')) queries.push(`${kw} site:dice.com`);
+    const queries = [baseQuery];
+    if (scrapeConf.visaMode !== 'off') queries.push(`${baseQuery} visa sponsorship`);
+    if (scrapeConf.sources.includes('Dice')) queries.push(`${baseQuery} site:dice.com`);
 
     try {
       const all = [];
@@ -352,22 +422,28 @@ export default function App() {
         }
 
         const mapped = data.data.filter(j => {
-          const tx = ((j.job_description||'') + ' ' + (j.job_title||'')).toLowerCase();
-          // Remove explicit no-sponsorship postings
-          if (scrapeConf.visaMode !== 'off' && NEG.some(k => tx.includes(k))) return false;
-          // H1B-only mode: require at least one positive sponsorship signal
-          if (scrapeConf.visaMode === 'only' && !POS.some(k => tx.includes(k))) return false;
+          const visa = classifySponsorship(j.job_title, j.job_description);
+          // Remove confirmed no-sponsorship postings
+          if (scrapeConf.visaMode !== 'off' && visa.score === 0) return false;
+          // H1B-only mode: require explicit or mentioned sponsorship signal
+          if (scrapeConf.visaMode === 'only' && !visa.mentioned) return false;
           // Salary floor
           if (Number(profile.minSalary) && j.job_min_salary && j.job_min_salary < Number(profile.minSalary)) return false;
+          // Career level filter — drop jobs that clearly don't match the selected level
+          if (scrapeConf.careerLevel !== 'all') {
+            const lvl = detectLevel(j.job_title, j.job_description);
+            if (lvl !== scrapeConf.careerLevel) return false;
+          }
           // Source filter — only applied when user has selected specific sources
           if (scrapeConf.sources.length > 0) {
             const pub = (j.job_publisher || '').toLowerCase();
-            const activeSources = scrapeConf.sources.filter(s => s !== 'Dice'); // Dice handled via query
+            const activeSources = scrapeConf.sources.filter(s => s !== 'Dice');
             if (activeSources.length > 0 && !activeSources.some(s => pub.includes(s.toLowerCase()))) return false;
           }
           return true;
         }).map(j => {
           const tx = ((j.job_description||'') + ' ' + (j.job_title||'')).toLowerCase();
+          const visa = classifySponsorship(j.job_title, j.job_description);
           return {
             id: j.job_id, title: j.job_title, company: j.employer_name,
             location: j.job_is_remote ? 'Remote' : `${j.job_city||''}, ${j.job_state||j.job_country||''}`.trim().replace(/^,\s*/,''),
@@ -381,10 +457,7 @@ export default function App() {
             description: (j.job_description||'').slice(0,600),
             team: (()=>{ const s=(j.job_description||'').split(/[.!?]/).filter(s=>/team|squad|collaborat|culture/i.test(s)).slice(0,2).join('. ').trim(); return s||'Collaborative engineering team.'; })(),
             employerLogo: j.employer_logo||null,
-            visa: {
-              explicit: ['will sponsor','visa sponsorship','h1b sponsor','sponsorship available','we sponsor'].some(k=>tx.includes(k)),
-              mentioned: POS.some(k=>tx.includes(k)),
-            },
+            visa,
           };
         });
 
@@ -408,6 +481,68 @@ export default function App() {
       }
     } catch(e) { setErr(e.message); log(`Error: ${e.message}`, "error"); }
     setBusy(b=>({...b,scrape:false}));
+  };
+
+  // ── Claude AI H1B Batch Classifier ──────────────────────────────────────────
+  const doH1BAnalysis = async () => {
+    if (!ak) { setErr("Add Anthropic API key in Setup"); setTab("setup"); return; }
+    // Only send jobs that don't already have a high-confidence rule-based result
+    const toAnalyze = jobs.filter(j => !j.visa?.aiAnalyzed && !j.visa?.explicit && (j.visa?.score || 0) < 80).slice(0, 30);
+    if (toAnalyze.length === 0) { log("All visible jobs already have high-confidence sponsorship data ✓", "success"); return; }
+    setBusy(b=>({...b,h1b:true})); setLogs([]); setErr("");
+    log(`Running AI H1B analysis on ${toAnalyze.length} ambiguous jobs...`);
+
+    const jobList = toAnalyze.map(j =>
+      `ID:${j.id}\nCOMPANY:${j.company}\nDESC:${(j.description||"").slice(0,500)}`
+    ).join("\n---\n");
+
+    const prompt = `Analyze each job posting for H1B visa sponsorship. Return a JSON array ONLY (no markdown):
+[{"id":"job_id","sponsors":true,"confidence":"high","reason":"brief reason"}]
+
+Rules:
+- sponsors=true ONLY if the description explicitly mentions H1B, visa sponsorship, OPT, or work authorization support
+- sponsors=false if it says no sponsorship, US citizens only, or is silent on the topic
+- confidence: "high" = explicit statement, "medium" = indirect signal (e.g. "we welcome international candidates"), "low" = unclear
+- Base judgment ONLY on what is written — do not infer from company name or size
+
+JOBS:
+${jobList}`;
+
+    try {
+      const r = await fetch("https://api.anthropic.com/v1/messages", {
+        method:"POST", headers:{"Content-Type":"application/json","x-api-key":ak,"anthropic-version":"2023-06-01"},
+        body:JSON.stringify({ model:"claude-haiku-4-5-20251001", max_tokens:1000, messages:[{role:"user",content:prompt}] }),
+      });
+      const data = await r.json();
+      const text = data.content?.[0]?.text || "[]";
+      let results=[];
+      try { results = JSON.parse(text.replace(/```json|```/g,"").trim()); } catch {}
+
+      const resultMap = Object.fromEntries(results.map(r=>[r.id,r]));
+      setJobs(prev => prev.map(j => {
+        const ai = resultMap[j.id];
+        if (!ai) return j;
+        const aiScore = ai.sponsors ? (ai.confidence==="high"?95:ai.confidence==="medium"?70:50) : 5;
+        return {
+          ...j,
+          visa: {
+            ...j.visa,
+            explicit: ai.sponsors && ai.confidence === "high",
+            mentioned: ai.sponsors,
+            score: aiScore,
+            confidence: ai.confidence,
+            aiAnalyzed: true,
+            aiReason: ai.reason,
+          },
+        };
+      }));
+
+      const confirmed = results.filter(r=>r.sponsors && r.confidence==="high").length;
+      const likely    = results.filter(r=>r.sponsors && r.confidence!=="high").length;
+      const none      = results.filter(r=>!r.sponsors).length;
+      log(`AI analysis done — ${confirmed} confirmed sponsors · ${likely} likely · ${none} no sponsorship`, "success");
+    } catch(e) { setErr(e.message); log(`Error: ${e.message}`,"error"); }
+    setBusy(b=>({...b,h1b:false}));
   };
 
   // ── Resume Upload ──
@@ -577,6 +712,7 @@ Rules: Mirror exact keywords. Reorder bullets by relevance. No invented experien
               </div>
               <div style={{ marginLeft:"auto", display:"flex", gap:7, alignItems:"flex-end" }}>
                 <Btn onClick={()=>setTab("scrape")}>⚡ SCRAPE</Btn>
+                <Btn onClick={doH1BAnalysis} disabled={busy.h1b} v="secondary" s={{fontSize:9}}>{busy.h1b?<><Spinner size={10}/> Analyzing...</>:"🤖 AI H1B Analysis"}</Btn>
                 <Btn onClick={()=>{setLevelFilter("all");setVisaFilter("all");setStatusFilter("all");}} v="ghost" s={{fontSize:9}}>RESET FILTERS</Btn>
               </div>
             </div>
@@ -603,7 +739,9 @@ Rules: Mirror exact keywords. Reorder bullets by relevance. No invented experien
                         {(()=>{const M={new:[C.accent2,"NEW"],tailored:[C.accent,"TAILORED"],applied:[C.warn,"APPLIED"],interview:[C.info,"🎉 INTERVIEW"]};const[c,l]=M[job.status]||[C.accent2,"NEW"];return<Badge color={c} label={l}/>;})()}
                         {/* Level */}
                         <Badge color={lvl.color} label={lvl.label}/>
-                        {job.visa?.explicit&&<Badge color={C.accent2} label="🛂 H1B"/>}
+                        {job.visa?.explicit&&<Badge color={C.accent2} label={`🛂 H1B${job.visa?.aiAnalyzed?" AI✓":""}`}/>}
+                        {!job.visa?.explicit&&job.visa?.mentioned&&<Badge color={C.accent} label={`👀 Likely${job.visa?.aiAnalyzed?" AI":""}`}/>}
+                        {job.visa?.score>0&&job.visa?.score<40&&!job.visa?.explicit&&!job.visa?.mentioned&&<Badge color={C.muted} label="❓ Unclear"/>}
                         {h1b.active&&<Badge color={C.gold} label="2026 ✓"/>}
                       </div>
                       <div style={{ fontSize:11,color:C.accent2,marginBottom:4 }}>{job.company} · {job.location} · {job.salary}</div>
@@ -732,6 +870,15 @@ Rules: Mirror exact keywords. Reorder bullets by relevance. No invented experien
               <div>
                 <label style={{ fontSize:8,color:C.muted,letterSpacing:1.2,display:"block",marginBottom:5 }}>LOCATION</label>
                 <input value={scrapeConf.location} onChange={e=>setScrapeConf(s=>({...s,location:e.target.value}))} placeholder="Remote, New York, San Francisco..." style={{ width:"100%",background:C.bg,border:`1px solid ${C.border}`,color:C.text,fontSize:12,padding:"8px 10px",borderRadius:4 }}/>
+              </div>
+              {/* Career level */}
+              <div>
+                <label style={{ fontSize:8,color:C.muted,letterSpacing:1.2,display:"block",marginBottom:5 }}>CAREER LEVEL <span style={{ color:C.muted }}>(added to search query)</span></label>
+                <div style={{ display:"flex",gap:5,flexWrap:"wrap" }}>
+                  {CAREER_LEVELS.map(l=>(
+                    <button key={l.id} onClick={()=>setScrapeConf(s=>({...s,careerLevel:l.id}))} style={{ background:scrapeConf.careerLevel===l.id?l.color||C.accent:C.border,border:"none",color:scrapeConf.careerLevel===l.id?"#000":"#666",cursor:"pointer",fontFamily:MONO,fontSize:9,padding:"4px 9px",borderRadius:3 }}>{l.label}</button>
+                  ))}
+                </div>
               </div>
               {/* Date range */}
               <div>
